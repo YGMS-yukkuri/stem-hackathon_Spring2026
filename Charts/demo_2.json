@@ -1,0 +1,147 @@
+{
+    "usc": {
+        "objects": [
+            {
+                "beat": 0.0,
+                "bpm": 160.0,
+                "type": "bpm"
+            },
+            {
+                "beat": 10.0,
+                "bpm": 160.0,
+                "type": "bpm"
+            },
+            {
+                "changes": [
+                    {
+                        "beat": 0.0,
+                        "timeScale": 1.0
+                    },
+                    {
+                        "beat": 11.0,
+                        "timeScale": 2.0
+                    }
+                ],
+                "type": "timeScaleGroup"
+            },
+            {
+                "beat": 0.0,
+                "critical": false,
+                "lane": -4.5,
+                "size": 1.5,
+                "timeScaleGroup": 0,
+                "trace": false,
+                "type": "single"
+            },
+            {
+                "beat": 5.0,
+                "critical": true,
+                "lane": 4.5,
+                "size": 1.5,
+                "timeScaleGroup": 0,
+                "trace": false,
+                "type": "single"
+            },
+            {
+                "beat": 4.0,
+                "critical": false,
+                "direction": "up",
+                "lane": -4.5,
+                "size": 1.5,
+                "timeScaleGroup": 0,
+                "trace": false,
+                "type": "single"
+            },
+            {
+                "beat": 9.0,
+                "lane": -4.5,
+                "size": 1.5,
+                "timeScaleGroup": 0,
+                "type": "damage"
+            },
+            {
+                "beat": 6.0,
+                "critical": false,
+                "lane": -4.5,
+                "size": 1.5,
+                "timeScaleGroup": 0,
+                "trace": true,
+                "type": "single"
+            },
+            {
+                "color": "green",
+                "fade": "out",
+                "midpoints": [
+                    {
+                        "beat": 7.0,
+                        "ease": "linear",
+                        "lane": -4.5,
+                        "size": 1.5,
+                        "timeScaleGroup": 0
+                    },
+                    {
+                        "beat": 8.0,
+                        "ease": "linear",
+                        "lane": -4.5,
+                        "size": 1.5,
+                        "timeScaleGroup": 0
+                    }
+                ],
+                "type": "guide"
+            },
+            {
+                "connections": [
+                    {
+                        "beat": 1.0,
+                        "critical": false,
+                        "ease": "linear",
+                        "judgeType": "normal",
+                        "lane": -4.5,
+                        "size": 1.5,
+                        "timeScaleGroup": 0,
+                        "type": "start"
+                    },
+                    {
+                        "beat": 1.5,
+                        "critical": false,
+                        "ease": "linear",
+                        "lane": -4.5,
+                        "size": 1.5,
+                        "timeScaleGroup": 0,
+                        "type": "tick"
+                    },
+                    {
+                        "beat": 2.0,
+                        "ease": "linear",
+                        "lane": -4.5,
+                        "size": 1.5,
+                        "timeScaleGroup": 0,
+                        "type": "tick"
+                    },
+                    {
+                        "beat": 2.5,
+                        "critical": false,
+                        "ease": "linear",
+                        "lane": -4.5,
+                        "size": 1.5,
+                        "timeScaleGroup": 0,
+                        "type": "attach"
+                    },
+                    {
+                        "beat": 3.0,
+                        "critical": false,
+                        "judgeType": "normal",
+                        "lane": -4.5,
+                        "size": 1.5,
+                        "timeScaleGroup": 0,
+                        "type": "end"
+                    }
+                ],
+                "critical": false,
+                "type": "slide"
+            }
+        ],
+        "offset": -0.0
+    },
+    "version": 2
+}
