@@ -4,6 +4,8 @@ const FALLBACK_CHART_FILES = [
 ];
 const DIFFICULTY_KEYS = ["EASY", "NORMAL", "HARD", "EXPERT", "MASTER"];
 const JUDGE_ADJUST_UNIT_SEC = 0.016;
+const JUDGE_TEXT_Y_SCALE_PX = 50;
+const SETTINGS_STORAGE_KEY = "stem-rhythm-settings";
 
 const DIFFICULTY_DAMAGE_RATE = {
   Easy: 0.2,
@@ -28,6 +30,14 @@ const TIMING_HINT_COLORS = {
   SLOW: "#ff4d4d"
 };
 
+const DIFFICULTY_TINT = {
+  Easy: "#2dd36f22",
+  Normal: "#4fc3f733",
+  Hard: "#ffd54f2e",
+  Expert: "#ef535033",
+  Master: "#ab47bc33"
+};
+
 const app = {
   chartData: null,
   gameState: null,
@@ -38,7 +48,7 @@ const app = {
     laneSpeed: 1.0,
     judgeA: 0.0,
     judgeB: 0.0,
-    judgeTextY: -18,
+    judgeTextY: 0.0,
     showCP: false,
     difficulty: "Normal"
   }
@@ -85,6 +95,54 @@ function clamp(value, min, max) {
 
 function formatNumber(value) {
   return Math.round(value).toLocaleString("ja-JP");
+}
+
+function applyDifficultyTint() {
+  const color = DIFFICULTY_TINT[app.config.difficulty] || "#00bcd400";
+  document.documentElement.style.setProperty("--difficulty-tint", color);
+}
+
+function saveSettings() {
+  const data = {
+    laneSpeed: app.config.laneSpeed,
+    judgeA: app.config.judgeA,
+    judgeB: app.config.judgeB,
+    judgeTextY: app.config.judgeTextY,
+    difficulty: app.config.difficulty,
+    showCP: app.config.showCP
+  };
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(data));
+  } catch (error) {
+    // ignore storage errors
+  }
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (typeof data.laneSpeed === "number" && data.laneSpeed > 0) app.config.laneSpeed = data.laneSpeed;
+    if (typeof data.judgeA === "number") app.config.judgeA = clamp(data.judgeA, -5, 5);
+    if (typeof data.judgeB === "number") app.config.judgeB = clamp(data.judgeB, -5, 5);
+    if (typeof data.judgeTextY === "number") app.config.judgeTextY = clamp(data.judgeTextY, -5, 5);
+    if (typeof data.showCP === "boolean") app.config.showCP = data.showCP;
+    if (typeof data.difficulty === "string" && Object.prototype.hasOwnProperty.call(DIFFICULTY_DAMAGE_RATE, data.difficulty)) {
+      app.config.difficulty = data.difficulty;
+    }
+  } catch (error) {
+    // ignore parse/storage errors
+  }
+}
+
+function applyConfigToUI() {
+  ui.laneSpeed.value = app.config.laneSpeed.toFixed(1);
+  ui.judgeA.value = app.config.judgeA.toFixed(1);
+  ui.judgeB.value = app.config.judgeB.toFixed(1);
+  ui.judgeTextY.value = app.config.judgeTextY.toFixed(1);
+  ui.showCP.checked = app.config.showCP;
+  ui.difficultySelect.value = app.config.difficulty;
 }
 
 function beatToSecFactory(bpmObjects) {
@@ -432,7 +490,7 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
     const laneW = gs.trackWidth / 12;
     const laneLeft = gs.trackX;
     const x = laneLeft + (laneIdx + 0.5) * laneW;
-    pushJudgeText(gs, judge, x, gs.judgeY + app.config.judgeTextY);
+    pushJudgeText(gs, judge, x, gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX);
 
     if (note.type !== "damage" && shouldShowTimingHint(judge)) {
       const hint = timingHintLabel(deltaMs);
@@ -440,7 +498,7 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
         gs.judgeTexts.push({
           label: hint,
           x,
-          y: gs.judgeY + app.config.judgeTextY + 24,
+          y: gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX + 24,
           born: performance.now() / 1000,
           customColor: TIMING_HINT_COLORS[hint]
         });
@@ -584,17 +642,14 @@ function setupSteppers() {
         max = Number.POSITIVE_INFINITY;
       }
       if (target === "judgeTextY") {
-        min = -300;
-        max = 300;
+        min = -5;
+        max = 5;
       }
       const rawNext = app.config[target] + step;
       const next = target === "laneSpeed" ? Math.max(min, rawNext) : clamp(rawNext, min, max);
       app.config[target] = Math.round(next * 10) / 10;
-      if (target === "judgeTextY") {
-        ui[target].value = String(Math.round(app.config[target]));
-      } else {
-        ui[target].value = app.config[target].toFixed(1);
-      }
+      ui[target].value = app.config[target].toFixed(1);
+      saveSettings();
     });
   });
 }
@@ -646,6 +701,10 @@ function syncDifficultyOptions() {
   if (!byDiff[selectedKey]) {
     ui.difficultySelect.value = firstEnabled || "Normal";
   }
+
+  app.config.difficulty = ui.difficultySelect.value;
+  applyDifficultyTint();
+  saveSettings();
 }
 
 function resolveSelectedChartPath() {
@@ -1173,6 +1232,8 @@ async function startGame() {
 
   app.config.difficulty = toDifficultyLabel(toDifficultyKey(ui.difficultySelect.value));
   app.config.showCP = ui.showCP.checked;
+  saveSettings();
+  applyDifficultyTint();
 
   let chart;
   try {
@@ -1264,6 +1325,10 @@ function backToMenu() {
 }
 
 async function init() {
+  loadSettings();
+  applyConfigToUI();
+  applyDifficultyTint();
+
   ui.startButton.disabled = true;
   ui.menuStatus.textContent = "譜面一覧を取得中...";
 
@@ -1278,6 +1343,15 @@ async function init() {
 
   setupSteppers();
   ui.chartSelect.addEventListener("change", syncDifficultyOptions);
+  ui.difficultySelect.addEventListener("change", () => {
+    app.config.difficulty = ui.difficultySelect.value;
+    applyDifficultyTint();
+    saveSettings();
+  });
+  ui.showCP.addEventListener("change", () => {
+    app.config.showCP = ui.showCP.checked;
+    saveSettings();
+  });
   ui.startButton.addEventListener("click", startGame);
   ui.backButton.addEventListener("click", backToMenu);
 }

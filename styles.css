@@ -1,6 +1,7 @@
 :root {
   --bg0: #07111e;
   --bg1: #0d2236;
+  --difficulty-tint: #00bcd400;
   --accent: #25d6a5;
   --accent2: #ffd166;
   --danger: #ef476f;
@@ -17,7 +18,8 @@ body {
   min-height: 100vh;
   color: var(--text);
   font-family: "M PLUS 1p", sans-serif;
-  background: radial-gradient(circle at 10% -10%, #1d4f78 0%, var(--bg0) 35%),
+  background: linear-gradient(var(--difficulty-tint), var(--difficulty-tint)),
+    radial-gradient(circle at 10% -10%, #1d4f78 0%, var(--bg0) 35%),
     linear-gradient(160deg, var(--bg0), var(--bg1));
 }
 
@@ -81,6 +83,10 @@ label,
   justify-content: space-between;
   align-items: center;
   gap: 0.8rem;
+}
+
+.check-row {
+  width: 100%;
 }
 
 select,
@@ -224,5 +230,10 @@ select,
   .option-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .check-row {
+    flex-direction: row;
+    align-items: center;
   }
 }
