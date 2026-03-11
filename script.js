@@ -23,6 +23,11 @@ const JUDGE_COLORS = {
   DAMAGE: "#ff5252"
 };
 
+const TIMING_HINT_COLORS = {
+  EARLY: "#4ea8ff",
+  SLOW: "#ff4d4d"
+};
+
 const app = {
   chartData: null,
   gameState: null,
@@ -356,7 +361,20 @@ function pushJudgeText(gs, label, x, y) {
   });
 }
 
-function registerJudge(gs, note, judge, laneIdx) {
+function shouldShowTimingHint(judge) {
+  if (app.config.showCP) {
+    return judge !== "C-Perfect";
+  }
+  return judge === "Great" || judge === "Good" || judge === "Bad" || judge === "Miss";
+}
+
+function timingHintLabel(deltaMs) {
+  if (deltaMs < 0) return "EARLY";
+  if (deltaMs > 0) return "SLOW";
+  return "";
+}
+
+function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
   const now = gs.elapsed;
   note.judged = true;
   note.judge = judge;
@@ -415,6 +433,19 @@ function registerJudge(gs, note, judge, laneIdx) {
     const laneLeft = gs.trackX;
     const x = laneLeft + (laneIdx + 0.5) * laneW;
     pushJudgeText(gs, judge, x, gs.judgeY + app.config.judgeTextY);
+
+    if (note.type !== "damage" && shouldShowTimingHint(judge)) {
+      const hint = timingHintLabel(deltaMs);
+      if (hint) {
+        gs.judgeTexts.push({
+          label: hint,
+          x,
+          y: gs.judgeY + app.config.judgeTextY + 24,
+          born: performance.now() / 1000,
+          customColor: TIMING_HINT_COLORS[hint]
+        });
+      }
+    }
   }
 
   if (note.type === "slide") {
@@ -495,7 +526,7 @@ function onKeyDown(ev) {
 
   const deltaMs = (now - target.time) * 1000;
   const judge = judgeByDelta(deltaMs, target.critical, target.direction);
-  registerJudge(gs, target, judge, idx);
+  registerJudge(gs, target, judge, idx, deltaMs);
 
   if (target.direction && judge !== "Miss") {
     gs.pendingDirection.set(target.id, {
@@ -531,7 +562,7 @@ function onKeyUp(ev) {
       type: "single",
       trace: false
     };
-    registerJudge(gs, releaseNote, judge, idx);
+    registerJudge(gs, releaseNote, judge, idx, (gs.elapsed - pending.time) * 1000);
     break;
   }
 }
@@ -956,7 +987,7 @@ function drawScene(gs) {
     ctx.globalAlpha = alpha;
     ctx.font = "bold 26px Orbitron";
     ctx.textAlign = "center";
-    ctx.fillStyle = JUDGE_COLORS[t.label] || "#fff";
+    ctx.fillStyle = t.customColor || JUDGE_COLORS[t.label] || "#fff";
     const text = t.label === "C-Perfect" && !app.config.showCP ? "Perfect" : t.label;
     ctx.fillText(text, t.x, yy);
     ctx.globalAlpha = 1;
@@ -974,7 +1005,7 @@ function updateAutoJudge(gs) {
       if (now >= note.time) {
         const state = gs.slideStates.get(note.slideId);
         const active = Boolean(state && state.active);
-        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane));
+        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
       }
       continue;
     }
@@ -983,7 +1014,7 @@ function updateAutoJudge(gs) {
       if (now >= note.time) {
         const state = gs.slideStates.get(note.slideId);
         const active = Boolean(state && state.active);
-        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane));
+        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
         if (state) {
           state.active = false;
           state.finished = true;
@@ -996,7 +1027,7 @@ function updateAutoJudge(gs) {
       if (now >= note.time) {
         const state = gs.slideStates.get(note.slideId);
         const active = Boolean(state && state.active);
-        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane));
+        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
       }
       continue;
     }
@@ -1010,7 +1041,7 @@ function updateAutoJudge(gs) {
         }
       }
       if (now > note.time + 0.05) {
-        registerJudge(gs, note, note.touched ? "DAMAGE" : "SAFE", laneStartIndex(note.lane));
+        registerJudge(gs, note, note.touched ? "DAMAGE" : "SAFE", laneStartIndex(note.lane), (now - note.time) * 1000);
       }
       continue;
     }
@@ -1019,18 +1050,18 @@ function updateAutoJudge(gs) {
       if (Math.abs(now - note.time) <= 0.125) {
         for (const laneIdx of pressedLanes) {
           if (noteWithinLane(note, laneIdx)) {
-            registerJudge(gs, note, "C-Perfect", laneIdx);
+            registerJudge(gs, note, "C-Perfect", laneIdx, (now - note.time) * 1000);
             break;
           }
         }
       } else if (now > note.time + 0.125) {
-        registerJudge(gs, note, "Miss", laneStartIndex(note.lane));
+        registerJudge(gs, note, "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
       }
       continue;
     }
 
     if (now > note.time + 0.1) {
-      registerJudge(gs, note, "Miss", laneStartIndex(note.lane));
+      registerJudge(gs, note, "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
     }
   }
 
@@ -1047,7 +1078,7 @@ function updateAutoJudge(gs) {
         type: "single",
         trace: false
       };
-      registerJudge(gs, releaseNote, "Good", pending.laneIdx);
+      registerJudge(gs, releaseNote, "Good", pending.laneIdx, (now - pending.time) * 1000);
     }
   }
 }

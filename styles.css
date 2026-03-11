@@ -159,7 +159,7 @@ select,
 
 #gameCanvas {
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 16 / 10;
   border-radius: 14px;
   border: 1px solid #467598;
   background: linear-gradient(#04111d, #0f2b42);
