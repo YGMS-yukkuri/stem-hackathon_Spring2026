@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>STEM リズムゲーム</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="menu">
+    <h1>STEM リズムゲーム</h1>
+    <label>譜面ファイル: <select id="chart-select"></select></label><br>
+    <label>レーンスピード: <input type="number" id="lane-speed" value="1.0" step="0.1" min="0.1"></label><br>
+    <label>判定調整A: <input type="number" id="offset-a" value="0" step="0.1" min="-5" max="5"></label><br>
+    <label>判定調整B: <input type="number" id="offset-b" value="0" step="0.1" min="-5" max="5"></label><br>
+    <button id="start-btn">START</button>
+  </div>
+
+  <canvas id="game-canvas" width="800" height="600" style="display:none"></canvas>
+  <div id="hud" style="position:absolute;top:10px;left:10px;color:#fff;display:none">
+    <div>Score: <span id="hud-score">0</span></div>
+    <div>Combo: <span id="hud-combo">0</span></div>
+    <div>HP: <span id="hud-hp">0</span></div>
+  </div>
+
+  <script src="src/game.js"></script>
+  <script>
+    // initialize menu
+    const chartSelect = document.getElementById('chart-select');
+    const charts = [
+      'Charts/demo.json',
+      'Charts/demo_1.json',
+      'Charts/demo_2.json',
+      'Charts/demo_3.json',
+      'Charts/demo_4.json',
+      'Charts/demo_5.json',
+      'Charts/demo6.json',
+      'Charts/demo7.json',
+      'Charts/demo_8.json'
+    ];
+    charts.forEach(path => {
+      const o = document.createElement('option');
+      o.value = path;
+      o.textContent = path.split('/').pop();
+      chartSelect.appendChild(o);
+    });
+
+    const startBtn = document.getElementById('start-btn');
+    startBtn.addEventListener('click', () => {
+      const canvas = document.getElementById('game-canvas');
+      canvas.style.display = 'block';
+      document.getElementById('menu').style.display = 'none';
+      const game = new Game(canvas);
+      const laneSpeed = parseFloat(document.getElementById('lane-speed').value);
+      const offsetA = parseFloat(document.getElementById('offset-a').value);
+      const offsetB = parseFloat(document.getElementById('offset-b').value);
+      game.options.laneSpeed = laneSpeed;
+      game.options.judgeOffsetA = offsetA;
+      game.options.judgeOffsetB = offsetB;
+      game.loadChart(chartSelect.value).then(() => {
+        game.start();
+      });
+    });
+  </script>
+</body>
+</html>
