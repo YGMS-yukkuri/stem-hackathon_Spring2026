@@ -48,6 +48,7 @@ const app = {
     laneSpeed: 1.0,
     judgeA: 0.0,
     judgeB: 0.0,
+    volume: 50,
     judgeTextY: 0.0,
     showCP: false,
     difficulty: "Normal"
@@ -63,6 +64,7 @@ const ui = {
   laneSpeed: document.getElementById("laneSpeed"),
   judgeA: document.getElementById("judgeA"),
   judgeB: document.getElementById("judgeB"),
+  volume: document.getElementById("volume"),
   judgeTextY: document.getElementById("judgeTextY"),
   showCP: document.getElementById("showCP"),
   startButton: document.getElementById("startButton"),
@@ -107,6 +109,7 @@ function saveSettings() {
     laneSpeed: app.config.laneSpeed,
     judgeA: app.config.judgeA,
     judgeB: app.config.judgeB,
+    volume: app.config.volume,
     judgeTextY: app.config.judgeTextY,
     difficulty: app.config.difficulty,
     showCP: app.config.showCP
@@ -126,6 +129,7 @@ function loadSettings() {
     if (typeof data.laneSpeed === "number" && data.laneSpeed > 0) app.config.laneSpeed = data.laneSpeed;
     if (typeof data.judgeA === "number") app.config.judgeA = clamp(data.judgeA, -5, 5);
     if (typeof data.judgeB === "number") app.config.judgeB = clamp(data.judgeB, -5, 5);
+    if (typeof data.volume === "number") app.config.volume = clamp(Math.round(data.volume), 0, 100);
     if (typeof data.judgeTextY === "number") app.config.judgeTextY = clamp(data.judgeTextY, -5, 5);
     if (typeof data.showCP === "boolean") app.config.showCP = data.showCP;
     if (typeof data.difficulty === "string" && Object.prototype.hasOwnProperty.call(DIFFICULTY_DAMAGE_RATE, data.difficulty)) {
@@ -140,6 +144,7 @@ function applyConfigToUI() {
   ui.laneSpeed.value = app.config.laneSpeed.toFixed(1);
   ui.judgeA.value = app.config.judgeA.toFixed(1);
   ui.judgeB.value = app.config.judgeB.toFixed(1);
+  ui.volume.value = String(app.config.volume);
   ui.judgeTextY.value = app.config.judgeTextY.toFixed(1);
   ui.showCP.checked = app.config.showCP;
   ui.difficultySelect.value = app.config.difficulty;
@@ -641,6 +646,10 @@ function setupSteppers() {
         min = 0.1;
         max = Number.POSITIVE_INFINITY;
       }
+      if (target === "volume") {
+        min = 0;
+        max = 100;
+      }
       if (target === "judgeTextY") {
         min = -5;
         max = 5;
@@ -648,7 +657,15 @@ function setupSteppers() {
       const rawNext = app.config[target] + step;
       const next = target === "laneSpeed" ? Math.max(min, rawNext) : clamp(rawNext, min, max);
       app.config[target] = Math.round(next * 10) / 10;
-      ui[target].value = app.config[target].toFixed(1);
+      if (target === "volume") {
+        app.config.volume = clamp(Math.round(app.config.volume), 0, 100);
+        ui.volume.value = String(app.config.volume);
+        if (app.audio) {
+          app.audio.volume = clamp(app.config.volume / 100, 0, 1);
+        }
+      } else {
+        ui[target].value = app.config[target].toFixed(1);
+      }
       saveSettings();
     });
   });
@@ -740,6 +757,7 @@ function primeAudioPlayback(chartPath) {
   stopAudio();
   const audio = new Audio(toFetchUrl(audioPath));
   audio.preload = "auto";
+  audio.volume = clamp(app.config.volume / 100, 0, 1);
   audio.muted = true;
   app.audio = audio;
   app.audioPath = audioPath;
@@ -764,9 +782,11 @@ function playChartAudio(chartPath) {
     stopAudio();
     audio = new Audio(toFetchUrl(audioPath));
     audio.preload = "auto";
+    audio.volume = clamp(app.config.volume / 100, 0, 1);
     app.audio = audio;
     app.audioPath = audioPath;
   }
+  audio.volume = clamp(app.config.volume / 100, 0, 1);
 
   const safePlay = () => {
     audio.play().catch(() => {
