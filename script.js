@@ -7,6 +7,7 @@ const DIFFICULTY_KEYS = ["EASY", "NORMAL", "HARD", "EXPERT", "MASTER"];
 const JUDGE_ADJUST_UNIT_SEC = 0.016;
 const JUDGE_TEXT_Y_SCALE_PX = 50;
 const SETTINGS_STORAGE_KEY = "stem-rhythm-settings";
+const ENABLE_CONSOLE_LOG = true;
 
 const DIFFICULTY_DAMAGE_RATE = {
   Easy: 0.2,
@@ -30,6 +31,8 @@ const TIMING_HINT_COLORS = {
   EARLY: "#4ea8ff",
   SLOW: "#ff4d4d"
 };
+
+const SCORE_MAX_WITH_CRITICAL_BONUS = 1100000;
 
 const DIFFICULTY_TINT = {
   Easy: "#2dd36f22",
@@ -98,6 +101,11 @@ function clamp(value, min, max) {
 
 function formatNumber(value) {
   return Math.round(value).toLocaleString("ja-JP");
+}
+
+function logGame(tag, payload) {
+  if (!ENABLE_CONSOLE_LOG) return;
+  console.log(`[YukkURHYTHM][${tag}]`, payload);
 }
 
 function applyDifficultyTint() {
@@ -254,7 +262,7 @@ function buildJudgeItems(chart) {
         critical: !!obj.critical,
         direction: !!obj.direction,
         judged: false,
-        comboValue: obj.direction ? 2 : 1,
+        comboValue: 1,
         timeScale: timeScaleAt(obj.timeScaleGroup || 0, obj.beat)
       });
       drawObjects.push({ type: "single", ref: obj, time });
@@ -288,7 +296,7 @@ function buildJudgeItems(chart) {
 
         const visibleTick = c.type !== "tick" || Object.prototype.hasOwnProperty.call(c, "critical");
         if (visibleTick) {
-          const comboValue = c.type === "end" && c.direction ? 2 : 1;
+          const comboValue = 1;
           judgeItems.push({
             id: `slide-${judgeItems.length}`,
             type: "slide",
@@ -352,14 +360,30 @@ function buildJudgeItems(chart) {
 
   judgeItems.sort((a, b) => a.time - b.time);
 
-  const totalCombo = judgeItems
-    .filter((n) => n.type !== "damage")
-    .reduce((sum, n) => sum + n.comboValue, 0);
+  const directionReleaseComboCount = judgeItems.filter(
+    (n) => n.type !== "damage" && n.direction && (n.type === "single" || (n.type === "slide" && n.pointType === "end"))
+  ).length;
+
+  const totalCombo =
+    judgeItems
+      .filter((n) => n.type !== "damage")
+      .reduce((sum, n) => sum + n.comboValue, 0) +
+    directionReleaseComboCount;
 
   const criticalCount = judgeItems.filter((n) => n.critical && n.type !== "damage").length || 1;
   const damageCount = judgeItems.filter((n) => n.type === "damage").length;
 
   const endTime = Math.max(...judgeItems.map((n) => n.time), 0) + 2;
+
+  logGame("CHART_ANALYZE", {
+    totalNotes: judgeItems.length,
+    totalCombo,
+    criticalCount,
+    damageCount,
+    basePerCombo: totalCombo > 0 ? 1000000 / totalCombo : 0,
+    criticalBonusUnit: criticalCount > 0 ? 100000 / criticalCount : 0,
+    theoreticalMax: SCORE_MAX_WITH_CRITICAL_BONUS
+  });
 
   return {
     judgeItems,
@@ -392,19 +416,26 @@ function noteWithinLane(note, laneIdx) {
 }
 
 function scoreRateForJudge(judge, critical) {
-  if (critical) {
-    if (judge === "C-Perfect") return 1;
-    if (judge === "Perfect") return 1;
-    if (judge === "Great") return 0.6;
-    if (judge === "Good") return 0.4;
-    return 0;
-  }
+  const normalTable = {
+    "C-Perfect": 1,
+    Perfect: 1,
+    Great: 0.8,
+    Good: 0.5,
+    Miss: 0,
+    Bad: 0
+  };
 
-  if (judge === "C-Perfect") return 1;
-  if (judge === "Perfect") return 1;
-  if (judge === "Great") return 0.8;
-  if (judge === "Good") return 0.5;
-  return 0;
+  const criticalTable = {
+    "C-Perfect": 1,
+    Perfect: 1,
+    Great: 0.6,
+    Good: 0.4,
+    Miss: 0,
+    Bad: 0
+  };
+
+  const table = critical ? criticalTable : normalTable;
+  return table[judge] ?? 0;
 }
 
 function bonusRateForJudge(judge, isTraceCritical) {
@@ -438,9 +469,9 @@ function pushJudgeText(gs, label, x, y) {
 
 function shouldShowTimingHint(judge) {
   if (app.config.showCP) {
-    return judge !== "C-Perfect";
+    return judge === "Perfect" || judge === "Great" || judge === "Good" || judge === "Bad";
   }
-  return judge === "Great" || judge === "Good" || judge === "Bad" || judge === "Miss";
+  return judge === "Great" || judge === "Good" || judge === "Bad";
 }
 
 function timingHintLabel(deltaMs) {
@@ -476,6 +507,21 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
       gs.hp = clamp(gs.hp + gs.hpMax * 0.1, 0, gs.hpMax);
     }
     gs.counts[judge] = (gs.counts[judge] || 0) + 1;
+
+    const laneW = gs.trackWidth > 0 ? gs.trackWidth / 12 : ui.canvas.width * 0.8 / 12;
+    const laneLeft = gs.trackWidth > 0 ? gs.trackX : ui.canvas.width * 0.1;
+    const x = laneLeft + (laneIdx + 0.5) * laneW;
+    pushJudgeText(gs, judge, x, gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX);
+
+    logGame("JUDGE_DAMAGE", {
+      judge,
+      laneIdx,
+      deltaMs,
+      hp: gs.hp,
+      combo: gs.combo,
+      score: gs.score
+    });
+
     return;
   }
 
@@ -484,9 +530,12 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
   gs.score += gs.basePerCombo * value * rate;
 
   if (note.critical) {
-    const bonus = gs.criticalBonusUnit * bonusRateForJudge(judge, !!note.trace);
+    const judgeBonusNumber = bonusRateForJudge(judge, !!note.trace) * 10;
+    const bonus = (100000 / Math.max(gs.criticalCount, 1)) * (judgeBonusNumber / 10);
     gs.score += bonus;
   }
+
+  gs.score = Math.min(gs.score, SCORE_MAX_WITH_CRITICAL_BONUS);
 
   const comboContinue = judge === "C-Perfect" || judge === "Perfect" || judge === "Great" || judge === "Good" || judge === "Bad";
   if (comboContinue) {
@@ -521,6 +570,18 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
         });
       }
     }
+
+    logGame("JUDGE_NOTE", {
+      noteType: note.type,
+      pointType: note.pointType || "",
+      judge,
+      laneIdx,
+      deltaMs,
+      critical: !!note.critical,
+      combo: gs.combo,
+      score: gs.score,
+      hp: gs.hp
+    });
   }
 
   if (note.type === "slide") {
@@ -907,7 +968,7 @@ async function loadChart(path) {
   return json;
 }
 
-function drawNoteRect(note, y, color, gs) {
+function drawNoteRect(note, y, color, gs, strokeColor = "") {
   const laneW = gs.trackWidth / 12;
   const rect = laneRect(note.lane, note.size, gs.trackX, laneW, gs.judgeY);
   const h = 16;
@@ -924,6 +985,12 @@ function drawNoteRect(note, y, color, gs) {
   ctx.lineTo(rect.x, y + r);
   ctx.quadraticCurveTo(rect.x, y, rect.x + r, y);
   ctx.fill();
+
+  if (strokeColor) {
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
 
   if (note.direction) {
     ctx.fillStyle = "#ffffff";
@@ -1065,7 +1132,12 @@ function drawScene(gs) {
     if (note.type === "slide") color = "#5dade2";
     if (note.direction) color = "#ff70a6";
 
-    drawNoteRect(note, y, color, gs);
+    let strokeColor = "";
+    if (note.type === "slide" && (note.pointType === "tick" || note.pointType === "attach")) {
+      strokeColor = "#ff9f1c";
+    }
+
+    drawNoteRect(note, y, color, gs, strokeColor);
   }
 
   for (const t of gs.judgeTexts) {
@@ -1216,6 +1288,14 @@ function showResult(gs) {
     chip.textContent = s;
     ui.specials.appendChild(chip);
   }
+
+  logGame("RESULT", {
+    score: gs.score,
+    maxCombo: gs.maxCombo,
+    counts: gs.counts,
+    hp: gs.hp,
+    specials: computeSpecials(gs)
+  });
 }
 
 function tick() {
@@ -1266,6 +1346,17 @@ async function startGame() {
   saveSettings();
   applyDifficultyTint();
 
+  logGame("START_REQUEST", {
+    chart: selectedChartPath,
+    difficulty: app.config.difficulty,
+    laneSpeed: app.config.laneSpeed,
+    judgeA: app.config.judgeA,
+    judgeB: app.config.judgeB,
+    judgeTextY: app.config.judgeTextY,
+    volume: app.config.volume,
+    showCP: app.config.showCP
+  });
+
   let chart;
   try {
     chart = await loadChart(selectedChartPath);
@@ -1310,6 +1401,7 @@ async function startGame() {
     hpMax,
     basePerCombo: built.totalCombo > 0 ? 1000000 / built.totalCombo : 0,
     criticalBonusUnit: built.criticalCount > 0 ? 100000 / built.criticalCount : 0,
+    criticalCount: built.criticalCount,
     damageCountAll: built.damageCount,
     noDamageBroken: false,
     fullComboPossible: true,
