@@ -15,7 +15,8 @@
 
 body {
   margin: 0;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   color: var(--text);
   font-family: "M PLUS 1p", sans-serif;
   background: linear-gradient(var(--difficulty-tint), var(--difficulty-tint)),
@@ -37,7 +38,9 @@ body {
   position: relative;
   z-index: 1;
   width: min(1200px, 95vw);
-  margin: 2rem auto;
+  height: 100vh;
+  padding: 1rem 0;
+  margin: 0 auto;
 }
 
 .panel {
