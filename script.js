@@ -124,7 +124,7 @@ function laneWidthCount(size) {
 
 function getEffectiveChartOffsetSec(chart) {
   const raw = Number(chart?.usc?.offset || 0);
-  return -raw;
+  return raw;
 }
 
 function buildJudgeItems(chart) {
