@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>STEM Rhythm Prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+1p:wght@400;700;800&family=Orbitron:wght@500;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-grid"></div>
+    <main class="app-shell">
+      <section id="menu" class="panel visible">
+        <h1>STEM RHYTHM</h1>
+        <p class="subtitle">仕様準拠Webリズムゲーム</p>
+
+        <div class="controls">
+          <label>
+            譜面
+            <select id="chartSelect"></select>
+          </label>
+
+          <label>
+            難易度
+            <select id="difficultySelect">
+              <option value="Easy">Easy</option>
+              <option value="Normal" selected>Normal</option>
+              <option value="Hard">Hard</option>
+              <option value="Expert">Expert</option>
+              <option value="Master">Master</option>
+            </select>
+          </label>
+
+          <div class="option-row">
+            <span>レーンスピード</span>
+            <div class="stepper" data-target="laneSpeed">
+              <button type="button" data-step="-1.0">--</button>
+              <button type="button" data-step="-0.1">-</button>
+              <output id="laneSpeed">1.0</output>
+              <button type="button" data-step="0.1">+</button>
+              <button type="button" data-step="1.0">++</button>
+            </div>
+          </div>
+
+          <div class="option-row">
+            <span>判定調整A</span>
+            <div class="stepper" data-target="judgeA">
+              <button type="button" data-step="-0.1">-</button>
+              <output id="judgeA">0.0</output>
+              <button type="button" data-step="0.1">+</button>
+            </div>
+          </div>
+
+          <div class="option-row">
+            <span>判定調整B</span>
+            <div class="stepper" data-target="judgeB">
+              <button type="button" data-step="-0.1">-</button>
+              <output id="judgeB">0.0</output>
+              <button type="button" data-step="0.1">+</button>
+            </div>
+          </div>
+
+          <div class="option-row">
+            <span>判定表示高さ(px)</span>
+            <div class="stepper" data-target="judgeTextY">
+              <button type="button" data-step="-5">-</button>
+              <output id="judgeTextY">-18</output>
+              <button type="button" data-step="5">+</button>
+            </div>
+          </div>
+
+          <div class="toggles">
+            <label><input id="showCP" type="checkbox" /> C-Perfect表示</label>
+          </div>
+
+          <button id="startButton" class="start-btn" type="button">START</button>
+          <p id="menuStatus" class="status"></p>
+        </div>
+      </section>
+
+      <section id="game" class="panel">
+        <header class="hud">
+          <div class="score-box">SCORE <span id="scoreText">0</span></div>
+          <div class="combo-box">COMBO <span id="comboText">0</span></div>
+        </header>
+
+        <div class="hp-wrap">
+          <div class="hp-bar" id="hpBar"></div>
+        </div>
+
+        <div class="canvas-wrap">
+          <canvas id="gameCanvas" width="1280" height="720"></canvas>
+          <div id="readyOverlay" class="overlay hidden">準備はOK?</div>
+          <div id="gameOverOverlay" class="overlay hidden danger">GAME OVER</div>
+        </div>
+      </section>
+
+      <section id="result" class="panel">
+        <h2>RESULT</h2>
+        <div class="result-grid">
+          <p>Score: <strong id="resultScore">0</strong></p>
+          <p>Max Combo: <strong id="resultCombo">0</strong></p>
+          <p>C-Perfect: <strong id="rCP">0</strong></p>
+          <p>Perfect: <strong id="rP">0</strong></p>
+          <p>Great: <strong id="rG">0</strong></p>
+          <p>Good: <strong id="rGo">0</strong></p>
+          <p>Miss: <strong id="rMiss">0</strong></p>
+          <p>Bad: <strong id="rBad">0</strong></p>
+          <p>DAMAGE: <strong id="rDmg">0</strong></p>
+        </div>
+        <div id="specials" class="specials"></div>
+        <button id="backButton" type="button">タイトルへ戻る</button>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>
