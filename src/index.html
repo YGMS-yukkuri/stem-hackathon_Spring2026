@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>リズムゲーム</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="playfield" width="800" height="600"></canvas>
+        <div id="ui">
+            <div id="score">0</div>
+            <div id="combo">0</div>
+            <div id="hp-bar"><div id="hp-bar-fill"></div></div>
+            <div id="judge-effect"></div>
+        </div>
+    </div>
+    <div id="menu">
+        <h1>リズムゲーム</h1>
+        <div>
+            <label>曲: <select id="song-select"></select></label>
+        </div>
+        <div>
+            <label>難易度: <select id="difficulty-select"></select></label>
+        </div>
+        <div>
+            <label>レーンスピード: 
+                <button id="speed-minusminus">--</button>
+                <button id="speed-dec">-</button>
+                <span id="speed-val">1.0</span>
+                <button id="speed-inc">+</button>
+                <button id="speed-plusplus">++</button>
+            </label>
+        </div>
+        <div>
+            <label>判定調整A: <button id="offsetA-dec">-</button><span id="offsetA-val">0.0</span><button id="offsetA-inc">+</button></label>
+        </div>
+        <div>
+            <label>判定調整B: <button id="offsetB-dec">-</button><span id="offsetB-val">0.0</span><button id="offsetB-inc">+</button></label>
+        </div>
+        <button id="start-button">START</button>
+    </div>
+    <div id="ready-screen" class="overlay">準備はOK?</div>
+    <div id="result-screen" class="overlay"></div>
+    <script type="module" src="js/game.js"></script> <!-- game.js imports other modules -->
+</body>
+</html>

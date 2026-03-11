@@ -1,0 +1,82 @@
+/* Basic styles for playfield and UI */
+body, html {
+    margin: 0;
+    padding: 0;
+    font-family: sans-serif;
+    background: #111;
+    color: #fff;
+}
+#game-container {
+    position: relative;
+    width: 800px;
+    margin: auto;
+    background: #222;
+}
+#playfield {
+    background: #000;
+    display: block;
+}
+#ui {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    pointer-events: none;
+}
+#score, #combo {
+    position: absolute;
+    top: 10px;
+    font-size: 24px;
+    text-align: center;
+}
+#score { left: 40%; }
+#combo { left: 55%; }
+#hp-bar {
+    position: absolute;
+    top: 50px;
+    left: 10px;
+    width: 780px;
+    height: 20px;
+    background: #555;
+}
+#hp-bar-fill {
+    height: 100%;
+    width: 100%;
+    background: green;
+}
+#judge-effect {
+    position: absolute;
+    top: 250px;
+    width: 100%;
+    text-align: center;
+    font-size: 48px;
+    pointer-events: none;
+    /* ensure visibility on dark backgrounds */
+    text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000;
+    background: rgba(0,0,0,0.5);
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+#menu {
+    width: 800px;
+    margin: auto;
+    padding: 20px;
+    background: #333;
+    /* initial visibility will be controlled by script */
+}
+#menu label { display: block; margin: 10px 0; }
+#ready-screen, #result-screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 800px;
+    height: 600px;
+    background: rgba(0,0,0,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 48px;
+    visibility: hidden;
+    z-index: 20;
+}
+.overlay.visible { visibility: visible; }
