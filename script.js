@@ -1,6 +1,7 @@
 const KEY_BIND = "asdfghjkl;:]";
 const FALLBACK_CHART_FILES = [
-  "Charts/終点の先が在るとするならば。/MASTER.usc"
+  "Charts/終点の先が在るとするならば。/MASTER.usc",
+  "Charts/回る空うさぎ/EXPERT.usc"
 ];
 const DIFFICULTY_KEYS = ["EASY", "NORMAL", "HARD", "EXPERT", "MASTER"];
 const JUDGE_ADJUST_UNIT_SEC = 0.016;
@@ -182,12 +183,25 @@ function beatToSecFactory(bpmObjects) {
   };
 }
 
-function laneStartIndex(lane) {
-  return clamp(Math.round(lane + 4.5), 0, 11);
-}
-
 function laneWidthCount(size) {
   return clamp(Math.round((size || 1.5) * 2), 1, 12);
+}
+
+function getLaneSpan(lane, size) {
+  const widthCount = laneWidthCount(size);
+  const laneCenter = Number(lane ?? 0) + 5.5;
+  const rawStart = Math.round(laneCenter - widthCount / 2);
+  const maxStart = Math.max(0, 12 - widthCount);
+  const start = clamp(rawStart, 0, maxStart);
+  return {
+    start,
+    widthCount,
+    end: start + widthCount - 1
+  };
+}
+
+function laneStartIndex(lane, size = 1.5) {
+  return getLaneSpan(lane, size).start;
 }
 
 function getEffectiveChartOffsetSec(chart) {
@@ -285,7 +299,7 @@ function buildJudgeItems(chart) {
             lane: c.lane,
             size: c.size,
             critical: !!c.critical || !!obj.critical,
-            trace: c.judgeType === "trace",
+            trace: c.type === "tick" || c.judgeType === "trace",
             direction: !!c.direction,
             judged: false,
             comboValue,
@@ -366,17 +380,15 @@ function setPanel(panel) {
 }
 
 function laneRect(lane, size, laneLeft, laneWidth, judgeY) {
-  const start = laneStartIndex(lane);
-  const widthCount = laneWidthCount(size);
-  const x = laneLeft + start * laneWidth;
-  const w = widthCount * laneWidth;
+  const span = getLaneSpan(lane, size);
+  const x = laneLeft + span.start * laneWidth;
+  const w = span.widthCount * laneWidth;
   return { x, w, y: judgeY };
 }
 
 function noteWithinLane(note, laneIdx) {
-  const start = laneStartIndex(note.lane);
-  const end = start + laneWidthCount(note.size) - 1;
-  return laneIdx >= start && laneIdx <= end;
+  const span = getLaneSpan(note.lane, note.size);
+  return laneIdx >= span.start && laneIdx <= span.end;
 }
 
 function scoreRateForJudge(judge, critical) {
@@ -933,9 +945,8 @@ function easeLerp(t, ease) {
 
 function laneCenterX(lane, size, gs) {
   const laneW = gs.trackWidth / 12;
-  const start = laneStartIndex(lane);
-  const widthCount = laneWidthCount(size || 1.5);
-  return gs.trackX + (start + widthCount / 2) * laneW;
+  const span = getLaneSpan(lane, size || 1.5);
+  return gs.trackX + (span.start + span.widthCount / 2) * laneW;
 }
 
 function drawPathObjects(gs, h, speedPx) {
@@ -1084,7 +1095,7 @@ function updateAutoJudge(gs) {
       if (now >= note.time) {
         const state = gs.slideStates.get(note.slideId);
         const active = Boolean(state && state.active);
-        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
+        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane, note.size), (now - note.time) * 1000);
       }
       continue;
     }
@@ -1093,7 +1104,7 @@ function updateAutoJudge(gs) {
       if (now >= note.time) {
         const state = gs.slideStates.get(note.slideId);
         const active = Boolean(state && state.active);
-        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
+        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane, note.size), (now - note.time) * 1000);
         if (state) {
           state.active = false;
           state.finished = true;
@@ -1106,7 +1117,7 @@ function updateAutoJudge(gs) {
       if (now >= note.time) {
         const state = gs.slideStates.get(note.slideId);
         const active = Boolean(state && state.active);
-        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
+        registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane, note.size), (now - note.time) * 1000);
       }
       continue;
     }
@@ -1120,7 +1131,7 @@ function updateAutoJudge(gs) {
         }
       }
       if (now > note.time + 0.05) {
-        registerJudge(gs, note, note.touched ? "DAMAGE" : "SAFE", laneStartIndex(note.lane), (now - note.time) * 1000);
+        registerJudge(gs, note, note.touched ? "DAMAGE" : "SAFE", laneStartIndex(note.lane, note.size), (now - note.time) * 1000);
       }
       continue;
     }
@@ -1134,13 +1145,13 @@ function updateAutoJudge(gs) {
           }
         }
       } else if (now > note.time + 0.125) {
-        registerJudge(gs, note, "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
+        registerJudge(gs, note, "Miss", laneStartIndex(note.lane, note.size), (now - note.time) * 1000);
       }
       continue;
     }
 
     if (now > note.time + 0.1) {
-      registerJudge(gs, note, "Miss", laneStartIndex(note.lane), (now - note.time) * 1000);
+      registerJudge(gs, note, "Miss", laneStartIndex(note.lane, note.size), (now - note.time) * 1000);
     }
   }
 
