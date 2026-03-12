@@ -217,6 +217,30 @@ function getEffectiveChartOffsetSec(chart) {
   return raw;
 }
 
+function interpolateSlidePointAtBeat(points, beat) {
+  if (!points.length) {
+    return { lane: 0, size: 1.5 };
+  }
+  if (beat <= points[0].beat) {
+    return { lane: points[0].lane, size: points[0].size || 1.5 };
+  }
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    if (beat <= b.beat) {
+      const span = Math.max(1e-6, b.beat - a.beat);
+      const t = clamp((beat - a.beat) / span, 0, 1);
+      const ease = b.ease || "linear";
+      const e = easeLerp(t, ease);
+      const lane = a.lane + (b.lane - a.lane) * e;
+      const size = (a.size || 1.5) + ((b.size || 1.5) - (a.size || 1.5)) * t;
+      return { lane, size };
+    }
+  }
+  const last = points[points.length - 1];
+  return { lane: last.lane, size: last.size || 1.5 };
+}
+
 function buildJudgeItems(chart) {
   const objects = chart.usc.objects || [];
   const bpms = objects.filter((o) => o.type === "bpm");
@@ -331,14 +355,15 @@ function buildJudgeItems(chart) {
 
       if (startPoint && endPoint) {
         for (let beat = startPoint.beat + 1.0; beat <= endPoint.beat - 1.0 + 1e-6; beat += 0.5) {
+          const p = interpolateSlidePointAtBeat(points, beat);
           judgeItems.push({
             id: `slide-pulse-${judgeItems.length}`,
             type: "slidePulse",
             slideId,
             time: beatToSec(beat) + chartOffsetSec,
             beat,
-            lane: startPoint.lane,
-            size: startPoint.size,
+            lane: p.lane,
+            size: p.size,
             critical: false,
             trace: false,
             direction: false,
@@ -508,10 +533,11 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
     }
     gs.counts[judge] = (gs.counts[judge] || 0) + 1;
 
-    const laneW = gs.trackWidth > 0 ? gs.trackWidth / 12 : ui.canvas.width * 0.8 / 12;
-    const laneLeft = gs.trackWidth > 0 ? gs.trackX : ui.canvas.width * 0.1;
-    const x = laneLeft + (laneIdx + 0.5) * laneW;
-    pushJudgeText(gs, judge, x, gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX);
+    const judgeBaseY = gs.judgeY > 0 ? gs.judgeY : ui.canvas.height * 0.9;
+    const trackWidth = gs.trackWidth > 0 ? gs.trackWidth : ui.canvas.width * 0.8;
+    const trackX = gs.trackWidth > 0 ? gs.trackX : ui.canvas.width * 0.1;
+    const x = laneCenterX(note.lane, note.size, { trackX, trackWidth });
+    pushJudgeText(gs, judge, x, judgeBaseY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX);
 
     logGame("JUDGE_DAMAGE", {
       judge,
@@ -552,37 +578,35 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
     gs.counts[judge] = (gs.counts[judge] || 0) + 1;
   }
 
-  if (note.type !== "slidePulse") {
-    const laneW = gs.trackWidth / 12;
-    const laneLeft = gs.trackX;
-    const x = laneLeft + (laneIdx + 0.5) * laneW;
-    pushJudgeText(gs, judge, x, gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX);
+  const trackWidth = gs.trackWidth > 0 ? gs.trackWidth : ui.canvas.width * 0.8;
+  const trackX = gs.trackWidth > 0 ? gs.trackX : ui.canvas.width * 0.1;
+  const x = laneCenterX(note.lane, note.size, { trackX, trackWidth });
+  pushJudgeText(gs, judge, x, gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX);
 
-    if (note.type !== "damage" && shouldShowTimingHint(judge)) {
-      const hint = timingHintLabel(deltaMs);
-      if (hint) {
-        gs.judgeTexts.push({
-          label: hint,
-          x,
-          y: gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX + 24,
-          born: performance.now() / 1000,
-          customColor: TIMING_HINT_COLORS[hint]
-        });
-      }
+  if (note.type !== "damage" && shouldShowTimingHint(judge)) {
+    const hint = timingHintLabel(deltaMs);
+    if (hint) {
+      gs.judgeTexts.push({
+        label: hint,
+        x,
+        y: gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX + 24,
+        born: performance.now() / 1000,
+        customColor: TIMING_HINT_COLORS[hint]
+      });
     }
-
-    logGame("JUDGE_NOTE", {
-      noteType: note.type,
-      pointType: note.pointType || "",
-      judge,
-      laneIdx,
-      deltaMs,
-      critical: !!note.critical,
-      combo: gs.combo,
-      score: gs.score,
-      hp: gs.hp
-    });
   }
+
+  logGame("JUDGE_NOTE", {
+    noteType: note.type,
+    pointType: note.pointType || "",
+    judge,
+    laneIdx,
+    deltaMs,
+    critical: !!note.critical,
+    combo: gs.combo,
+    score: gs.score,
+    hp: gs.hp
+  });
 
   if (note.type === "slide") {
     const state = gs.slideStates.get(note.slideId);
