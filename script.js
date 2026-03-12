@@ -7,6 +7,9 @@ const DIFFICULTY_KEYS = ["EASY", "NORMAL", "HARD", "EXPERT", "MASTER"];
 const JUDGE_ADJUST_UNIT_SEC = 0.016;
 const FAST_JUDGE_SNAP_SEC = 0.016;
 const JUDGE_TEXT_Y_SCALE_PX = 50;
+const DAMAGE_BASE_MULTIPLIER = 2.0;
+const COMBO_HEAL_INTERVAL = 50;
+const COMBO_HEAL_AMOUNT = 10;
 const SETTINGS_STORAGE_KEY = "stem-rhythm-settings";
 const ENABLE_CONSOLE_LOG = true;
 
@@ -438,6 +441,7 @@ function buildJudgeItems(chart) {
     totalCombo,
     criticalCount,
     damageCount,
+    hasGuide: drawObjects.some((obj) => obj.type === "guide"),
     endTime
   };
 }
@@ -536,7 +540,7 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
       gs.damageCount += 1;
       gs.noDamageBroken = true;
       const totalDamage = Math.max(gs.damageCountAll, 1);
-      const raw = ((gs.hpMax * 1.5) / totalDamage) * DIFFICULTY_DAMAGE_RATE[app.config.difficulty];
+      const raw = ((gs.hpMax * DAMAGE_BASE_MULTIPLIER) / totalDamage) * DIFFICULTY_DAMAGE_RATE[app.config.difficulty];
       const damage = Math.max(1, raw);
       if (gs.hp - damage <= 0 && !gs.damageOneTimeGuardUsed) {
         gs.hp = 1;
@@ -549,8 +553,6 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
         gs.gameOverAt = now;
         ui.gameOverOverlay.classList.remove("hidden");
       }
-    } else {
-      gs.hp = clamp(gs.hp + gs.hpMax * 0.1, 0, gs.hpMax);
     }
     gs.counts[judge] = (gs.counts[judge] || 0) + 1;
 
@@ -586,8 +588,15 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
 
   const comboContinue = judge === "C-Perfect" || judge === "Perfect" || judge === "Great" || judge === "Good" || judge === "Bad";
   if (comboContinue) {
+    const prevCombo = gs.combo;
     gs.combo += value;
     gs.maxCombo = Math.max(gs.maxCombo, gs.combo);
+    const prevMilestones = Math.floor(prevCombo / COMBO_HEAL_INTERVAL);
+    const nextMilestones = Math.floor(gs.combo / COMBO_HEAL_INTERVAL);
+    const milestoneGain = Math.max(0, nextMilestones - prevMilestones);
+    if (milestoneGain > 0) {
+      gs.hp = clamp(gs.hp + milestoneGain * COMBO_HEAL_AMOUNT, 0, gs.hpMax);
+    }
   } else {
     gs.combo = 0;
     gs.comboBroken = true;
@@ -1468,8 +1477,9 @@ function tick() {
 
   const allJudged = gs.notes.every((n) => n.judged);
   const finishedByTime = gs.elapsed > gs.endTime;
+  const finishedByJudged = allJudged && (!gs.hasGuide || gs.elapsed > gs.endTime);
 
-  if ((allJudged || finishedByTime) && !gs.gameOver) {
+  if ((finishedByJudged || finishedByTime) && !gs.gameOver) {
     gs.playing = false;
     showResult(gs);
     return;
@@ -1568,6 +1578,7 @@ async function startGame() {
     hasCritical: built.judgeItems.some((n) => n.critical),
     pendingDirection: new Map(),
     judgeTexts: [],
+    hasGuide: built.hasGuide,
     endTime: built.endTime,
     playing: false,
     gameOver: false,
