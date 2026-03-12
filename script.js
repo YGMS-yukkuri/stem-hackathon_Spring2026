@@ -667,6 +667,41 @@ function findBestTarget(gs, laneIdx, now, keyUp = false) {
   return best;
 }
 
+function findAllTargetsAtSameTime(gs, laneIdx, now, keyUp = false) {
+  const window = 0.14;
+  const targets = [];
+  let bestTime = null;
+
+  // まず最も近いノーツのタイミングを見つける
+  for (const note of gs.notes) {
+    if (note.judged || note.type === "damage" || note.type === "slidePulse") continue;
+    if (note.type === "slide" && note.pointType === "end" && !note.direction) continue;
+    if (note.type === "single" && note.direction && keyUp) continue;
+    if (!noteWithinLane(note, laneIdx)) continue;
+    const dt = now - note.time;
+    if (Math.abs(dt) > window) continue;
+
+    if (bestTime === null || Math.abs(dt) < Math.abs(now - bestTime)) {
+      bestTime = note.time;
+    }
+  }
+
+  if (bestTime === null) return targets;
+
+  // 同じタイミングのノーツをすべて集める
+  for (const note of gs.notes) {
+    if (note.judged || note.type === "damage" || note.type === "slidePulse") continue;
+    if (note.type === "slide" && note.pointType === "end" && !note.direction) continue;
+    if (note.type === "single" && note.direction && keyUp) continue;
+    if (!noteWithinLane(note, laneIdx)) continue;
+    if (note.time === bestTime) {
+      targets.push(note);
+    }
+  }
+
+  return targets;
+}
+
 function onKeyDown(ev) {
   const idx = KEY_BIND.indexOf(ev.key.toLowerCase());
   if (idx < 0) return;
@@ -677,24 +712,27 @@ function onKeyDown(ev) {
   if (!gs || !gs.playing) return;
 
   const now = gs.elapsed - app.config.judgeB * JUDGE_ADJUST_UNIT_SEC;
-  const target = findBestTarget(gs, idx, now, false);
-  if (!target) return;
+  const targets = findAllTargetsAtSameTime(gs, idx, now, false);
+  if (targets.length === 0) return;
 
-  if (target.trace) {
-    return;
-  }
+  // 同じタイミングの全ノーツを処理（traceは除く）
+  for (const target of targets) {
+    if (target.trace) {
+      continue;
+    }
 
-  const deltaMs = (now - target.time) * 1000;
-  const judge = judgeByDelta(deltaMs, target.critical, target.direction);
-  registerJudge(gs, target, judge, idx, deltaMs);
+    const deltaMs = (now - target.time) * 1000;
+    const judge = judgeByDelta(deltaMs, target.critical, target.direction);
+    registerJudge(gs, target, judge, idx, deltaMs);
 
-  if (target.direction && judge !== "Miss") {
-    gs.pendingDirection.set(target.id, {
-      note: target,
-      laneIdx: idx,
-      time: target.time,
-      resolved: false
-    });
+    if (target.direction && judge !== "Miss") {
+      gs.pendingDirection.set(target.id, {
+        note: target,
+        laneIdx: idx,
+        time: target.time,
+        resolved: false
+      });
+    }
   }
 }
 
@@ -710,7 +748,7 @@ function onKeyUp(ev) {
   for (const pending of gs.pendingDirection.values()) {
     if (pending.resolved || pending.laneIdx !== idx) continue;
     const deltaMs = Math.abs((gs.elapsed - pending.time) * 1000);
-    const judge = deltaMs <= 100 ? "C-Perfect" : "Good";
+    const judge = deltaMs <= 200 ? "C-Perfect" : "Good";
     pending.resolved = true;
 
     const releaseNote = {
@@ -1102,8 +1140,8 @@ function drawScene(gs) {
   const h = ui.canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  gs.trackX = w * 0.1;
-  gs.trackWidth = w * 0.8;
+  gs.trackX = w * 0.05;
+  gs.trackWidth = w * 0.9;
   gs.judgeY = h * 0.9;
 
   const laneW = gs.trackWidth / 12;
