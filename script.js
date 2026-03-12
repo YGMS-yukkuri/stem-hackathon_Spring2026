@@ -1,5 +1,9 @@
 const KEY_BIND = "asdfghjkl;:]";
-const FALLBACK_CHART_FILES = [
+const LAST_RESORT_CHART_SONGS = [
+  "終点の先が在るとするならば。",
+  "回る空うさぎ"
+];
+const LAST_RESORT_CHART_FILES = [
   "Charts/終点の先が在るとするならば。/MASTER.usc",
   "Charts/回る空うさぎ/EXPERT.usc"
 ];
@@ -841,6 +845,16 @@ function isChartFile(path) {
   return lower.endsWith(".usc");
 }
 
+function normalizeChartsRelativePath(path) {
+  const decoded = decodeURIComponent(String(path || "")).replace(/\\/g, "/");
+  const marker = "Charts/";
+  const markerIdx = decoded.indexOf(marker);
+  if (markerIdx >= 0) {
+    return decoded.slice(markerIdx).replace(/^\/+/, "");
+  }
+  return decoded.replace(/^\/+/, "");
+}
+
 function toDifficultyKey(uiValue) {
   return String(uiValue || "").toUpperCase();
 }
@@ -856,13 +870,14 @@ function toDifficultyLabel(diffKey) {
 }
 
 function parseChartMeta(path) {
-  const parts = path.split("/");
+  const normalizedPath = normalizeChartsRelativePath(path);
+  const parts = normalizedPath.split("/");
   const fileName = parts[parts.length - 1] || "";
   const noExt = fileName.replace(/\.usc$/i, "");
   const diffKey = noExt.toUpperCase();
   if (!DIFFICULTY_KEYS.includes(diffKey)) return null;
   const song = parts.length >= 3 ? parts[1] : noExt;
-  return { song, diffKey, path };
+  return { song, diffKey, path: normalizedPath };
 }
 
 function syncDifficultyOptions() {
@@ -896,7 +911,8 @@ function resolveSelectedChartPath() {
 }
 
 function resolveAudioPath(chartPath) {
-  const parts = chartPath.split("/");
+  const normalizedPath = normalizeChartsRelativePath(chartPath);
+  const parts = normalizedPath.split("/");
   if (parts.length < 3) return null;
   const song = parts[1];
   const folder = parts.slice(0, -1).join("/");
@@ -974,16 +990,17 @@ async function crawlChartsFromDirectoryListing(rootDir) {
   const found = new Set();
 
   async function walk(dirPath) {
-    if (visited.has(dirPath)) return;
-    visited.add(dirPath);
+    const normalizedDir = normalizeChartsRelativePath(dirPath);
+    if (visited.has(normalizedDir)) return;
+    visited.add(normalizedDir);
 
-    const res = await fetch(toFetchUrl(dirPath));
+    const res = await fetch(toFetchUrl(normalizedDir));
     if (!res.ok) return;
 
     const html = await res.text();
     const doc = new DOMParser().parseFromString(html, "text/html");
     const anchors = Array.from(doc.querySelectorAll("a[href]"));
-    const baseUrl = new URL(toFetchUrl(dirPath), window.location.href);
+    const baseUrl = new URL(toFetchUrl(normalizedDir), window.location.href);
 
     for (const a of anchors) {
       const href = a.getAttribute("href");
@@ -992,7 +1009,7 @@ async function crawlChartsFromDirectoryListing(rootDir) {
       const url = new URL(href, baseUrl);
       if (url.origin !== window.location.origin) continue;
 
-      const decodedPath = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+      const decodedPath = normalizeChartsRelativePath(url.pathname);
       if (!decodedPath.startsWith("Charts/")) continue;
 
       if (decodedPath.endsWith("/")) {
@@ -1007,6 +1024,87 @@ async function crawlChartsFromDirectoryListing(rootDir) {
   return Array.from(found).sort((a, b) => a.localeCompare(b, "ja"));
 }
 
+async function discoverFallbackSongsFromChartsRoot() {
+  let res;
+  try {
+    res = await fetch(toFetchUrl("Charts/"));
+  } catch (error) {
+    return [];
+  }
+  if (!res.ok) return [];
+
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const anchors = Array.from(doc.querySelectorAll("a[href]"));
+  const baseUrl = new URL(toFetchUrl("Charts/"), window.location.href);
+  const songs = new Set();
+
+  for (const a of anchors) {
+    const href = a.getAttribute("href");
+    if (!href || href === "../" || href.startsWith("#") || href.startsWith("?")) continue;
+
+    let url;
+    try {
+      url = new URL(href, baseUrl);
+    } catch (error) {
+      continue;
+    }
+    if (url.origin !== window.location.origin) continue;
+
+    const normalizedPath = normalizeChartsRelativePath(url.pathname);
+    if (!normalizedPath.startsWith("Charts/")) continue;
+
+    const rel = normalizedPath.slice("Charts/".length).replace(/\/+$/, "");
+    if (!rel || rel.includes("/")) continue;
+    songs.add(rel);
+  }
+
+  return Array.from(songs).sort((a, b) => a.localeCompare(b, "ja"));
+}
+
+async function discoverFallbackSongs() {
+  const songs = await discoverFallbackSongsFromChartsRoot();
+  if (songs.length) {
+    return songs;
+  }
+  return [...LAST_RESORT_CHART_SONGS];
+}
+
+async function discoverFallbackCharts() {
+  const candidates = [];
+  const songs = await discoverFallbackSongs();
+
+  for (const song of songs) {
+    for (const diffKey of DIFFICULTY_KEYS) {
+      const chartPath = `Charts/${song}/${diffKey}.usc`;
+      let res;
+      try {
+        res = await fetch(toFetchUrl(chartPath), { method: "HEAD" });
+      } catch (error) {
+        continue;
+      }
+
+      if (!res.ok && (res.status === 405 || res.status === 501)) {
+        try {
+          res = await fetch(toFetchUrl(chartPath));
+        } catch (error) {
+          continue;
+        }
+      }
+
+      if (res.ok) {
+        candidates.push(chartPath);
+      }
+    }
+  }
+
+  if (!candidates.length) {
+    return [...LAST_RESORT_CHART_FILES];
+  }
+
+  return candidates;
+}
+
 async function loadChartsList() {
   ui.chartSelect.innerHTML = "";
 
@@ -1018,7 +1116,7 @@ async function loadChartsList() {
   }
 
   if (!files.length) {
-    files = [...FALLBACK_CHART_FILES];
+    files = await discoverFallbackCharts();
   }
 
   const catalog = {};
@@ -1177,14 +1275,14 @@ function drawScene(gs) {
   gs.judgeY = h * 0.9;
 
   const laneW = gs.trackWidth / 12;
-  
+
   // Performance optimization: cache lane lines
-  const needsRebuild = laneLinesCache.width !== w || 
-                       laneLinesCache.height !== h ||
-                       laneLinesCache.trackX !== gs.trackX ||
-                       laneLinesCache.trackWidth !== gs.trackWidth ||
-                       laneLinesCache.judgeY !== gs.judgeY;
-  
+  const needsRebuild = laneLinesCache.width !== w ||
+    laneLinesCache.height !== h ||
+    laneLinesCache.trackX !== gs.trackX ||
+    laneLinesCache.trackWidth !== gs.trackWidth ||
+    laneLinesCache.judgeY !== gs.judgeY;
+
   if (needsRebuild) {
     laneLinesCache = {
       width: w,
@@ -1194,7 +1292,7 @@ function drawScene(gs) {
       judgeY: gs.judgeY,
       paths: []
     };
-    
+
     for (let i = 0; i <= 12; i += 1) {
       const x = gs.trackX + i * laneW;
       const path = new Path2D();
@@ -1206,9 +1304,9 @@ function drawScene(gs) {
       });
     }
   }
-  
+
   // Draw cached lane lines
-  for (const {path, color} of laneLinesCache.paths) {
+  for (const { path, color } of laneLinesCache.paths) {
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -1307,13 +1405,13 @@ function drawScene(gs) {
 
 function updateAutoJudge(gs) {
   const now = gs.elapsed - app.config.judgeB * JUDGE_ADJUST_UNIT_SEC;
-  
+
   // Performance optimization: early exit for future notes
   const maxLookAhead = 0.2; // Maximum judge window
-  
+
   for (const note of gs.notes) {
     if (note.judged) continue;
-    
+
     // Early skip for future notes beyond judge window
     if (now < note.time - maxLookAhead) break;
 
