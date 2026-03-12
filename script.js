@@ -5,6 +5,7 @@ const FALLBACK_CHART_FILES = [
 ];
 const DIFFICULTY_KEYS = ["EASY", "NORMAL", "HARD", "EXPERT", "MASTER"];
 const JUDGE_ADJUST_UNIT_SEC = 0.016;
+const FAST_JUDGE_SNAP_SEC = 0.016;
 const JUDGE_TEXT_Y_SCALE_PX = 50;
 const SETTINGS_STORAGE_KEY = "stem-rhythm-settings";
 const ENABLE_CONSOLE_LOG = true;
@@ -386,7 +387,7 @@ function buildJudgeItems(chart) {
         }
       }
 
-      drawObjects.push({ type: "slide", slideId, points, startTime, endTime });
+      drawObjects.push({ type: "slide", slideId, points, startTime, endTime, startCritical: !!obj.critical });
     }
 
     if (obj.type === "guide") {
@@ -410,7 +411,15 @@ function buildJudgeItems(chart) {
   const criticalCount = judgeItems.filter((n) => n.critical && n.type !== "damage").length || 1;
   const damageCount = judgeItems.filter((n) => n.type === "damage").length;
 
-  const endTime = Math.max(...judgeItems.map((n) => n.time), 0) + 2;
+  const guideEndTime = drawObjects.reduce((maxTime, obj) => {
+    if (obj.type !== "guide") return maxTime;
+    const points = obj.points || [];
+    if (!points.length) return maxTime;
+    const objEnd = Math.max(...points.map((p) => p.time));
+    return Math.max(maxTime, objEnd);
+  }, 0);
+  const noteEndTime = Math.max(...judgeItems.map((n) => n.time), 0);
+  const endTime = Math.max(noteEndTime, guideEndTime) + 2;
 
   logGame("CHART_ANALYZE", {
     totalNotes: judgeItems.length,
@@ -1042,7 +1051,7 @@ async function loadChart(path) {
   return json;
 }
 
-function drawNoteRect(note, y, color, gs, strokeColor = "") {
+function drawNoteRect(note, y, color, gs, strokeColor = "", strokeWidth = 2) {
   const laneW = gs.trackWidth / 12;
   const rect = laneRect(note.lane, note.size, gs.trackX, laneW, gs.judgeY);
   const h = 16;
@@ -1062,7 +1071,7 @@ function drawNoteRect(note, y, color, gs, strokeColor = "") {
 
   if (strokeColor) {
     ctx.strokeStyle = strokeColor;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = strokeWidth;
     ctx.stroke();
   }
 
@@ -1130,6 +1139,8 @@ function drawPathObjects(gs, h, speedPx) {
       const inWindow = gs.elapsed >= obj.startTime && gs.elapsed <= obj.endTime;
       if (inWindow && s && !s.active) {
         fill = "#5dade280";
+      } else if (obj.startCritical) {
+        fill = "#d4af37aa";
       }
     }
 
@@ -1245,11 +1256,13 @@ function drawScene(gs) {
     }
 
     let strokeColor = "";
+    let strokeWidth = 2;
     if (note.type === "slide" && (note.pointType === "tick" || note.pointType === "attach")) {
       strokeColor = "#ff9f1c";
+      strokeWidth = 4;
     }
 
-    drawNoteRect(note, y, color, gs, strokeColor);
+    drawNoteRect(note, y, color, gs, strokeColor, strokeWidth);
   }
 
   for (const t of gs.judgeTexts) {
@@ -1263,6 +1276,11 @@ function drawScene(gs) {
     ctx.textAlign = "center";
     ctx.fillStyle = t.customColor || JUDGE_COLORS[t.label] || "#fff";
     const text = t.label === "C-Perfect" && !app.config.showCP ? "Perfect" : t.label;
+    if (text === "Miss") {
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "#fff";
+      ctx.strokeText(text, t.x, yy);
+    }
     ctx.fillText(text, t.x, yy);
     ctx.globalAlpha = 1;
   }
@@ -1336,10 +1354,22 @@ function updateAutoJudge(gs) {
     }
 
     if (note.trace) {
+      if (note.fastSnapTouched && now >= note.time - FAST_JUDGE_SNAP_SEC) {
+        const laneIdx = Number.isInteger(note.fastSnapLane) ? note.fastSnapLane : laneStartIndex(note.lane, note.size);
+        registerJudge(gs, note, "C-Perfect", laneIdx, 0);
+        continue;
+      }
+
       if (Math.abs(now - note.time) <= 0.125) {
         for (const laneIdx of pressedLanes) {
           if (noteWithinLane(note, laneIdx)) {
-            registerJudge(gs, note, "C-Perfect", laneIdx, (now - note.time) * 1000);
+            if (now < note.time - FAST_JUDGE_SNAP_SEC) {
+              note.fastSnapTouched = true;
+              note.fastSnapLane = laneIdx;
+            } else {
+              const snappedDeltaMs = clamp((now - note.time) * 1000, -FAST_JUDGE_SNAP_SEC * 1000, FAST_JUDGE_SNAP_SEC * 1000);
+              registerJudge(gs, note, "C-Perfect", laneIdx, snappedDeltaMs);
+            }
             break;
           }
         }
