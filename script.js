@@ -95,6 +95,16 @@ const ui = {
 const ctx = ui.canvas.getContext("2d");
 const pressedLanes = new Set();
 
+// Performance optimization: cache for lane lines
+let laneLinesCache = {
+  width: 0,
+  height: 0,
+  trackX: 0,
+  trackWidth: 0,
+  judgeY: 0,
+  paths: []
+};
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -104,8 +114,9 @@ function formatNumber(value) {
 }
 
 function logGame(tag, payload) {
-  if (!ENABLE_CONSOLE_LOG) return;
-  console.log(`[YukkURHYTHM][${tag}]`, payload);
+  // Performance optimization: console logging disabled
+  // if (!ENABLE_CONSOLE_LOG) return;
+  // console.log(`[YukkURHYTHM][${tag}]`, payload);
 }
 
 function applyDifficultyTint() {
@@ -255,7 +266,8 @@ function buildJudgeItems(chart) {
 
   const timeScaleAt = (groupIndex, beat) => {
     const group = tsg[groupIndex] || tsg[0];
-    const changes = [...(group.changes || [])].sort((a, b) => a.beat - b.beat);
+    // Performance optimization: avoid spread operator
+    const changes = (group.changes || []).slice().sort((a, b) => a.beat - b.beat);
     let scale = 1;
     for (const c of changes) {
       if (c.beat <= beat) {
@@ -1145,16 +1157,45 @@ function drawScene(gs) {
   gs.judgeY = h * 0.9;
 
   const laneW = gs.trackWidth / 12;
-  for (let i = 0; i <= 12; i += 1) {
-    const x = gs.trackX + i * laneW;
-    ctx.strokeStyle = i % 2 === 0 ? "#2e5675" : "#23445f";
+  
+  // Performance optimization: cache lane lines
+  const needsRebuild = laneLinesCache.width !== w || 
+                       laneLinesCache.height !== h ||
+                       laneLinesCache.trackX !== gs.trackX ||
+                       laneLinesCache.trackWidth !== gs.trackWidth ||
+                       laneLinesCache.judgeY !== gs.judgeY;
+  
+  if (needsRebuild) {
+    laneLinesCache = {
+      width: w,
+      height: h,
+      trackX: gs.trackX,
+      trackWidth: gs.trackWidth,
+      judgeY: gs.judgeY,
+      paths: []
+    };
+    
+    for (let i = 0; i <= 12; i += 1) {
+      const x = gs.trackX + i * laneW;
+      const path = new Path2D();
+      path.moveTo(x, h * 0.05);
+      path.lineTo(x, gs.judgeY + 20);
+      laneLinesCache.paths.push({
+        path,
+        color: i % 2 === 0 ? "#2e5675" : "#23445f"
+      });
+    }
+  }
+  
+  // Draw cached lane lines
+  for (const {path, color} of laneLinesCache.paths) {
+    ctx.strokeStyle = color;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(x, h * 0.05);
-    ctx.lineTo(x, gs.judgeY + 20);
-    ctx.stroke();
+    ctx.stroke(path);
   }
 
+  // Draw judge line
   ctx.strokeStyle = "#7fe6c4";
   ctx.lineWidth = 3;
   ctx.beginPath();
@@ -1172,6 +1213,7 @@ function drawScene(gs) {
   const speedPx = 100 * app.config.laneSpeed;
   drawPathObjects(gs, h, speedPx);
 
+  // Performance optimization: draw only visible notes
   for (const note of gs.notes) {
     if (note.judged) continue;
     if (note.type === "slidePulse") continue;
@@ -1188,11 +1230,19 @@ function drawScene(gs) {
       continue;
     }
 
-    let color = "#ff9f1c";
-    if (note.trace) color = "#7bdff2";
-    if (note.critical) color = "#ffd54a";
-    if (note.type === "slide") color = "#5dade2";
-    if (note.direction) color = "#ff70a6";
+    // Performance optimization: simplified color selection
+    let color;
+    if (note.direction) {
+      color = "#ff70a6";
+    } else if (note.critical) {
+      color = "#ffd54a";
+    } else if (note.trace) {
+      color = "#7bdff2";
+    } else if (note.type === "slide") {
+      color = "#5dade2";
+    } else {
+      color = "#ff9f1c";
+    }
 
     let strokeColor = "";
     if (note.type === "slide" && (note.pointType === "tick" || note.pointType === "attach")) {
@@ -1217,18 +1267,33 @@ function drawScene(gs) {
     ctx.globalAlpha = 1;
   }
 
-  gs.judgeTexts = gs.judgeTexts.filter((t) => gs.nowSec - t.born <= 0.6);
+  // Performance optimization: in-place removal of expired texts
+  let writeIdx = 0;
+  for (let i = 0; i < gs.judgeTexts.length; i += 1) {
+    if (gs.nowSec - gs.judgeTexts[i].born <= 0.6) {
+      gs.judgeTexts[writeIdx] = gs.judgeTexts[i];
+      writeIdx += 1;
+    }
+  }
+  gs.judgeTexts.length = writeIdx;
 }
 
 function updateAutoJudge(gs) {
   const now = gs.elapsed - app.config.judgeB * JUDGE_ADJUST_UNIT_SEC;
+  
+  // Performance optimization: early exit for future notes
+  const maxLookAhead = 0.2; // Maximum judge window
+  
   for (const note of gs.notes) {
     if (note.judged) continue;
+    
+    // Early skip for future notes beyond judge window
+    if (now < note.time - maxLookAhead) break;
 
     if (note.type === "slidePulse") {
       if (now >= note.time) {
         const state = gs.slideStates.get(note.slideId);
-        const active = Boolean(state && state.active);
+        const active = !!(state && state.active);
         registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane, note.size), (now - note.time) * 1000);
       }
       continue;
@@ -1237,7 +1302,7 @@ function updateAutoJudge(gs) {
     if (note.type === "slide" && note.pointType === "end" && !note.direction) {
       if (now >= note.time) {
         const state = gs.slideStates.get(note.slideId);
-        const active = Boolean(state && state.active);
+        const active = !!(state && state.active);
         registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane, note.size), (now - note.time) * 1000);
         if (state) {
           state.active = false;
@@ -1250,7 +1315,7 @@ function updateAutoJudge(gs) {
     if (note.type === "slide" && note.pointType === "attach") {
       if (now >= note.time) {
         const state = gs.slideStates.get(note.slideId);
-        const active = Boolean(state && state.active);
+        const active = !!(state && state.active);
         registerJudge(gs, note, active ? "C-Perfect" : "Miss", laneStartIndex(note.lane, note.size), (now - note.time) * 1000);
       }
       continue;
