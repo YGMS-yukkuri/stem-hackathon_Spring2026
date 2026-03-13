@@ -16,6 +16,14 @@ const COMBO_HEAL_INTERVAL = 50;
 const COMBO_HEAL_AMOUNT = 10;
 const SETTINGS_STORAGE_KEY = "stem-rhythm-settings";
 const ENABLE_CONSOLE_LOG = true;
+const TOUCH_LANE_TOLERANCE = 1;
+
+const PARTICLE_COUNT_BY_LEVEL = {
+  high: 28,
+  standard: 16,
+  low: 8,
+  none: 0
+};
 
 const DIFFICULTY_DAMAGE_RATE = {
   Easy: 0.2,
@@ -63,7 +71,8 @@ const app = {
     volume: 50,
     judgeTextY: 0.0,
     showCP: false,
-    difficulty: "Normal"
+    difficulty: "Normal",
+    particleLevel: "standard"
   }
 };
 
@@ -78,6 +87,7 @@ const ui = {
   judgeB: document.getElementById("judgeB"),
   volume: document.getElementById("volume"),
   judgeTextY: document.getElementById("judgeTextY"),
+  particleLevel: document.getElementById("particleLevel"),
   showCP: document.getElementById("showCP"),
   startButton: document.getElementById("startButton"),
   backButton: document.getElementById("backButton"),
@@ -102,6 +112,9 @@ const ui = {
 
 const ctx = ui.canvas.getContext("2d");
 const pressedLanes = new Set();
+const activePointers = new Map();
+const keyboardHeldLanes = new Set();
+const touchLaneCounts = new Map();
 
 // Performance optimization: cache for lane lines
 let laneLinesCache = {
@@ -140,7 +153,8 @@ function saveSettings() {
     volume: app.config.volume,
     judgeTextY: app.config.judgeTextY,
     difficulty: app.config.difficulty,
-    showCP: app.config.showCP
+    showCP: app.config.showCP,
+    particleLevel: app.config.particleLevel
   };
   try {
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(data));
@@ -163,6 +177,9 @@ function loadSettings() {
     if (typeof data.difficulty === "string" && Object.prototype.hasOwnProperty.call(DIFFICULTY_DAMAGE_RATE, data.difficulty)) {
       app.config.difficulty = data.difficulty;
     }
+    if (typeof data.particleLevel === "string" && Object.prototype.hasOwnProperty.call(PARTICLE_COUNT_BY_LEVEL, data.particleLevel)) {
+      app.config.particleLevel = data.particleLevel;
+    }
   } catch (error) {
     // ignore parse/storage errors
   }
@@ -174,6 +191,7 @@ function applyConfigToUI() {
   ui.judgeB.value = app.config.judgeB.toFixed(1);
   ui.volume.value = String(app.config.volume);
   ui.judgeTextY.value = app.config.judgeTextY.toFixed(1);
+  ui.particleLevel.value = app.config.particleLevel;
   ui.showCP.checked = app.config.showCP;
   ui.difficultySelect.value = app.config.difficulty;
 }
@@ -249,7 +267,7 @@ function interpolateSlidePointAtBeat(points, beat) {
     if (beat <= b.beat) {
       const span = Math.max(1e-6, b.beat - a.beat);
       const t = clamp((beat - a.beat) / span, 0, 1);
-      const ease = b.ease || "linear";
+      const ease = a.ease || "linear";
       const e = easeLerp(t, ease);
       const lane = a.lane + (b.lane - a.lane) * e;
       const size = (a.size || 1.5) + ((b.size || 1.5) - (a.size || 1.5)) * t;
@@ -469,6 +487,52 @@ function noteWithinLane(note, laneIdx) {
   return laneIdx >= span.start && laneIdx <= span.end;
 }
 
+function noteWithinLaneWithTolerance(note, laneIdx, tolerance = 0) {
+  const span = getLaneSpan(note.lane, note.size);
+  return laneIdx >= span.start - tolerance && laneIdx <= span.end + tolerance;
+}
+
+function touchCountAtLane(laneIdx) {
+  return touchLaneCounts.get(laneIdx) || 0;
+}
+
+function isLaneHeldByTouch(laneIdx) {
+  return touchCountAtLane(laneIdx) > 0;
+}
+
+function isLanePressedNow(laneIdx) {
+  return keyboardHeldLanes.has(laneIdx) || isLaneHeldByTouch(laneIdx);
+}
+
+function syncPressedLane(laneIdx) {
+  if (isLanePressedNow(laneIdx)) {
+    pressedLanes.add(laneIdx);
+  } else {
+    pressedLanes.delete(laneIdx);
+  }
+}
+
+function clearInputStates() {
+  pressedLanes.clear();
+  keyboardHeldLanes.clear();
+  touchLaneCounts.clear();
+  activePointers.clear();
+}
+
+function activeInputToleranceAtLane(laneIdx) {
+  return isLaneHeldByTouch(laneIdx) ? TOUCH_LANE_TOLERANCE : 0;
+}
+
+function noteTouchedByPressedInput(note) {
+  for (const laneIdx of pressedLanes) {
+    const tolerance = activeInputToleranceAtLane(laneIdx);
+    if (noteWithinLaneWithTolerance(note, laneIdx, tolerance)) {
+      return laneIdx;
+    }
+  }
+  return -1;
+}
+
 function scoreRateForJudge(judge, critical) {
   const normalTable = {
     "C-Perfect": 1,
@@ -521,6 +585,83 @@ function pushJudgeText(gs, label, x, y) {
   });
 }
 
+function particleCountForLevel(level) {
+  return PARTICLE_COUNT_BY_LEVEL[level] ?? PARTICLE_COUNT_BY_LEVEL.standard;
+}
+
+function spawnJudgeParticles(gs, note, laneIdx, judge) {
+  if (!gs) return;
+  const count = particleCountForLevel(app.config.particleLevel);
+  if (count <= 0) return;
+  if (judge === "Miss" || judge === "SAFE") return;
+  if (note.type === "slidePulse") return;
+
+  const trackWidth = gs.trackWidth > 0 ? gs.trackWidth : ui.canvas.width * 0.8;
+  const trackX = gs.trackWidth > 0 ? gs.trackX : ui.canvas.width * 0.1;
+  const x = Number.isInteger(laneIdx)
+    ? trackX + ((laneIdx + 0.5) * trackWidth) / 12
+    : laneCenterX(note.lane, note.size, { trackX, trackWidth });
+  const y = gs.judgeY + 8;
+
+  let color = "#ffd166";
+  if (note.type === "damage" || judge === "DAMAGE") {
+    color = "#ff5e5e";
+  } else if (note.trace && note.critical) {
+    color = "#9fe8ff";
+  } else if (note.critical) {
+    color = "#ffd54a";
+  } else if (note.trace) {
+    color = "#7bdff2";
+  }
+
+  for (let i = 0; i < count; i += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 80 + Math.random() * 210;
+    gs.particles.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 40,
+      life: 0.35 + Math.random() * 0.25,
+      maxLife: 0.35 + Math.random() * 0.25,
+      size: 1.2 + Math.random() * 2.8,
+      color
+    });
+  }
+}
+
+function updateParticles(gs, dtSec) {
+  if (!gs || !gs.particles || !gs.particles.length) return;
+
+  const gravity = 520;
+  let writeIdx = 0;
+  for (let i = 0; i < gs.particles.length; i += 1) {
+    const p = gs.particles[i];
+    p.life -= dtSec;
+    if (p.life <= 0) continue;
+    p.vy += gravity * dtSec;
+    p.x += p.vx * dtSec;
+    p.y += p.vy * dtSec;
+    gs.particles[writeIdx] = p;
+    writeIdx += 1;
+  }
+  gs.particles.length = writeIdx;
+}
+
+function drawParticles(gs) {
+  if (!gs || !gs.particles || !gs.particles.length) return;
+
+  for (const p of gs.particles) {
+    const alpha = clamp(p.life / p.maxLife, 0, 1);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function shouldShowTimingHint(judge) {
   if (app.config.showCP) {
     return judge === "Perfect" || judge === "Great" || judge === "Good" || judge === "Bad";
@@ -538,6 +679,7 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
   const now = gs.elapsed;
   note.judged = true;
   note.judge = judge;
+  spawnJudgeParticles(gs, note, laneIdx, judge);
 
   if (note.type === "damage") {
     if (judge === "DAMAGE") {
@@ -701,7 +843,7 @@ function findBestTarget(gs, laneIdx, now, keyUp = false) {
   return best;
 }
 
-function findAllTargetsAtSameTime(gs, laneIdx, now, keyUp = false) {
+function findAllTargetsAtSameTime(gs, laneIdx, now, keyUp = false, laneTolerance = 0) {
   const window = 0.14;
   const targets = [];
   let bestTime = null;
@@ -711,7 +853,7 @@ function findAllTargetsAtSameTime(gs, laneIdx, now, keyUp = false) {
     if (note.judged || note.type === "damage" || note.type === "slidePulse") continue;
     if (note.type === "slide" && note.pointType === "end" && !note.direction) continue;
     if (note.type === "single" && note.direction && keyUp) continue;
-    if (!noteWithinLane(note, laneIdx)) continue;
+    if (!noteWithinLaneWithTolerance(note, laneIdx, laneTolerance)) continue;
     const dt = now - note.time;
     if (Math.abs(dt) > window) continue;
 
@@ -727,7 +869,7 @@ function findAllTargetsAtSameTime(gs, laneIdx, now, keyUp = false) {
     if (note.judged || note.type === "damage" || note.type === "slidePulse") continue;
     if (note.type === "slide" && note.pointType === "end" && !note.direction) continue;
     if (note.type === "single" && note.direction && keyUp) continue;
-    if (!noteWithinLane(note, laneIdx)) continue;
+    if (!noteWithinLaneWithTolerance(note, laneIdx, laneTolerance)) continue;
     if (note.time === bestTime) {
       targets.push(note);
     }
@@ -736,20 +878,30 @@ function findAllTargetsAtSameTime(gs, laneIdx, now, keyUp = false) {
   return targets;
 }
 
-function onKeyDown(ev) {
-  const idx = KEY_BIND.indexOf(ev.key.toLowerCase());
-  if (idx < 0) return;
-  ev.preventDefault();
-  pressedLanes.add(idx);
+function handleLanePress(laneIdx, source = "keyboard") {
+  if (!Number.isInteger(laneIdx) || laneIdx < 0 || laneIdx > 11) return;
+  let firstPressOnLane = false;
+
+  if (source === "touch") {
+    const prev = touchCountAtLane(laneIdx);
+    touchLaneCounts.set(laneIdx, prev + 1);
+    firstPressOnLane = prev === 0 && !keyboardHeldLanes.has(laneIdx);
+  } else {
+    if (keyboardHeldLanes.has(laneIdx)) return;
+    keyboardHeldLanes.add(laneIdx);
+    firstPressOnLane = !isLaneHeldByTouch(laneIdx);
+  }
+  syncPressedLane(laneIdx);
 
   const gs = app.gameState;
   if (!gs || !gs.playing) return;
+  if (!firstPressOnLane) return;
 
   const now = gs.elapsed - app.config.judgeB * JUDGE_ADJUST_UNIT_SEC;
-  const targets = findAllTargetsAtSameTime(gs, idx, now, false);
+  const laneTolerance = source === "touch" ? TOUCH_LANE_TOLERANCE : 0;
+  const targets = findAllTargetsAtSameTime(gs, laneIdx, now, false, laneTolerance);
   if (targets.length === 0) return;
 
-  // 同じタイミングの全ノーツを処理（traceは除く）
   for (const target of targets) {
     if (target.trace) {
       continue;
@@ -757,12 +909,12 @@ function onKeyDown(ev) {
 
     const deltaMs = (now - target.time) * 1000;
     const judge = judgeByDelta(deltaMs, target.critical, target.direction);
-    registerJudge(gs, target, judge, idx, deltaMs);
+    registerJudge(gs, target, judge, laneIdx, deltaMs);
 
     if (target.direction && judge !== "Miss") {
       gs.pendingDirection.set(target.id, {
         note: target,
-        laneIdx: idx,
+        laneIdx,
         time: target.time,
         resolved: false
       });
@@ -770,17 +922,27 @@ function onKeyDown(ev) {
   }
 }
 
-function onKeyUp(ev) {
-  const idx = KEY_BIND.indexOf(ev.key.toLowerCase());
-  if (idx < 0) return;
-  ev.preventDefault();
-  pressedLanes.delete(idx);
+function handleLaneRelease(laneIdx, source = "keyboard") {
+  if (!Number.isInteger(laneIdx) || laneIdx < 0 || laneIdx > 11) return;
+
+  if (source === "touch") {
+    const prev = touchCountAtLane(laneIdx);
+    if (prev > 1) {
+      touchLaneCounts.set(laneIdx, prev - 1);
+    } else {
+      touchLaneCounts.delete(laneIdx);
+    }
+  } else {
+    keyboardHeldLanes.delete(laneIdx);
+  }
+  syncPressedLane(laneIdx);
+  if (isLanePressedNow(laneIdx)) return;
 
   const gs = app.gameState;
   if (!gs || !gs.playing) return;
 
   for (const pending of gs.pendingDirection.values()) {
-    if (pending.resolved || pending.laneIdx !== idx) continue;
+    if (pending.resolved || pending.laneIdx !== laneIdx) continue;
     const deltaMs = Math.abs((gs.elapsed - pending.time) * 1000);
     const judge = deltaMs <= 200 ? "C-Perfect" : "Good";
     pending.resolved = true;
@@ -794,13 +956,114 @@ function onKeyUp(ev) {
       type: "single",
       trace: false
     };
-    registerJudge(gs, releaseNote, judge, idx, (gs.elapsed - pending.time) * 1000);
+    registerJudge(gs, releaseNote, judge, laneIdx, (gs.elapsed - pending.time) * 1000);
     break;
   }
 }
 
+function laneIndexFromClientX(clientX) {
+  const rect = ui.canvas.getBoundingClientRect();
+  if (rect.width <= 0) return -1;
+
+  const scaleX = ui.canvas.width / rect.width;
+  const x = (clientX - rect.left) * scaleX;
+
+  const gs = app.gameState;
+  let trackX = ui.canvas.width * 0.05;
+  let trackWidth = ui.canvas.width * 0.9;
+  if (gs && gs.trackWidth > 0) {
+    trackX = gs.trackX;
+    trackWidth = gs.trackWidth;
+  }
+
+  if (x < trackX || x >= trackX + trackWidth) return -1;
+  const laneW = trackWidth / 12;
+  return clamp(Math.floor((x - trackX) / laneW), 0, 11);
+}
+
+function pointerCountOnLane(laneIdx, ignorePointerId = null) {
+  let count = 0;
+  for (const [pointerId, lane] of activePointers.entries()) {
+    if (ignorePointerId !== null && pointerId === ignorePointerId) continue;
+    if (lane === laneIdx) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function onCanvasPointerDown(ev) {
+  ev.preventDefault();
+  const laneIdx = laneIndexFromClientX(ev.clientX);
+  activePointers.set(ev.pointerId, laneIdx);
+
+  if (laneIdx >= 0 && pointerCountOnLane(laneIdx, ev.pointerId) === 0) {
+    handleLanePress(laneIdx, "touch");
+  }
+
+  try {
+    ui.canvas.setPointerCapture(ev.pointerId);
+  } catch (error) {
+    // ignore unsupported capture
+  }
+}
+
+function onCanvasPointerMove(ev) {
+  if (!activePointers.has(ev.pointerId)) return;
+  ev.preventDefault();
+
+  const prevLane = activePointers.get(ev.pointerId);
+  const nextLane = laneIndexFromClientX(ev.clientX);
+  if (prevLane === nextLane) return;
+
+  if (prevLane >= 0 && pointerCountOnLane(prevLane, ev.pointerId) === 0) {
+    handleLaneRelease(prevLane, "touch");
+  }
+  activePointers.set(ev.pointerId, nextLane);
+  if (nextLane >= 0 && pointerCountOnLane(nextLane, ev.pointerId) === 0) {
+    handleLanePress(nextLane, "touch");
+  }
+}
+
+function onCanvasPointerUp(ev) {
+  if (!activePointers.has(ev.pointerId)) return;
+  ev.preventDefault();
+
+  const laneIdx = activePointers.get(ev.pointerId);
+  activePointers.delete(ev.pointerId);
+
+  if (laneIdx >= 0 && pointerCountOnLane(laneIdx) === 0) {
+    handleLaneRelease(laneIdx, "touch");
+  }
+
+  try {
+    ui.canvas.releasePointerCapture(ev.pointerId);
+  } catch (error) {
+    // ignore unsupported capture
+  }
+}
+
+function onKeyDown(ev) {
+  const idx = KEY_BIND.indexOf(ev.key.toLowerCase());
+  if (idx < 0) return;
+  if (ev.repeat) return;
+  ev.preventDefault();
+  handleLanePress(idx, "keyboard");
+}
+
+function onKeyUp(ev) {
+  const idx = KEY_BIND.indexOf(ev.key.toLowerCase());
+  if (idx < 0) return;
+  ev.preventDefault();
+  handleLaneRelease(idx, "keyboard");
+}
+
 window.addEventListener("keydown", onKeyDown);
 window.addEventListener("keyup", onKeyUp);
+ui.canvas.addEventListener("pointerdown", onCanvasPointerDown);
+ui.canvas.addEventListener("pointermove", onCanvasPointerMove);
+ui.canvas.addEventListener("pointerup", onCanvasPointerUp);
+ui.canvas.addEventListener("pointercancel", onCanvasPointerUp);
 
 function setupSteppers() {
   document.querySelectorAll(".stepper").forEach((wrap) => {
@@ -1161,19 +1424,22 @@ async function loadChart(path) {
 function drawNoteRect(note, y, color, gs, strokeColor = "", strokeWidth = 2) {
   const laneW = gs.trackWidth / 12;
   const rect = laneRect(note.lane, note.size, gs.trackX, laneW, gs.judgeY);
+  const visualWidthScale = 0.86;
+  const visualW = rect.w * visualWidthScale;
+  const visualX = rect.x + (rect.w - visualW) / 2;
   const h = 16;
   ctx.fillStyle = color;
   ctx.beginPath();
   const r = 7;
-  ctx.moveTo(rect.x + r, y);
-  ctx.lineTo(rect.x + rect.w - r, y);
-  ctx.quadraticCurveTo(rect.x + rect.w, y, rect.x + rect.w, y + r);
-  ctx.lineTo(rect.x + rect.w, y + h - r);
-  ctx.quadraticCurveTo(rect.x + rect.w, y + h, rect.x + rect.w - r, y + h);
-  ctx.lineTo(rect.x + r, y + h);
-  ctx.quadraticCurveTo(rect.x, y + h, rect.x, y + h - r);
-  ctx.lineTo(rect.x, y + r);
-  ctx.quadraticCurveTo(rect.x, y, rect.x + r, y);
+  ctx.moveTo(visualX + r, y);
+  ctx.lineTo(visualX + visualW - r, y);
+  ctx.quadraticCurveTo(visualX + visualW, y, visualX + visualW, y + r);
+  ctx.lineTo(visualX + visualW, y + h - r);
+  ctx.quadraticCurveTo(visualX + visualW, y + h, visualX + visualW - r, y + h);
+  ctx.lineTo(visualX + r, y + h);
+  ctx.quadraticCurveTo(visualX, y + h, visualX, y + h - r);
+  ctx.lineTo(visualX, y + r);
+  ctx.quadraticCurveTo(visualX, y, visualX + r, y);
   ctx.fill();
 
   if (strokeColor) {
@@ -1184,7 +1450,7 @@ function drawNoteRect(note, y, color, gs, strokeColor = "", strokeWidth = 2) {
 
   if (note.direction) {
     ctx.fillStyle = "#ffffff";
-    const cx = rect.x + rect.w / 2;
+    const cx = visualX + visualW / 2;
     ctx.beginPath();
     ctx.moveTo(cx, y + 3);
     ctx.lineTo(cx - 6, y + 13);
@@ -1224,7 +1490,7 @@ function drawPathObjects(gs, h, speedPx) {
       const xB = laneCenterX(b.lane, b.size, gs);
       const wA = laneWidthCount(a.size || 1.5) * (gs.trackWidth / 12);
       const wB = laneWidthCount(b.size || 1.5) * (gs.trackWidth / 12);
-      const ease = b.ease || "linear";
+      const ease = a.ease || "linear";
       for (let s = 0; s <= 8; s += 1) {
         const t = s / 8;
         const e = easeLerp(t, ease);
@@ -1343,27 +1609,40 @@ function drawScene(gs) {
       const laneR = laneRect(note.lane, note.size, gs.trackX, laneW, gs.judgeY);
       ctx.fillStyle = "#ff5252";
       ctx.beginPath();
-      ctx.ellipse(laneR.x + laneR.w / 2, y + 8, laneR.w / 2, 8, 0, 0, Math.PI * 2);
+      ctx.ellipse(laneR.x + laneR.w / 2, y + 8, laneR.w / 2, 12, 0, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = "#ff9f9f";
+      ctx.lineWidth = 3;
+      ctx.stroke();
       continue;
     }
 
     // Performance optimization: simplified color selection
     let color;
+    let strokeColor = "";
+    let strokeWidth = 2;
     if (note.direction) {
       color = "#ff70a6";
+      strokeColor = "#ffd2e4";
+      strokeWidth = 2.5;
+    } else if (note.trace && note.critical) {
+      color = "#8ee9ff";
+      strokeColor = "#d8f7ff";
+      strokeWidth = 1.5;
     } else if (note.critical) {
       color = "#ffd54a";
+      strokeColor = "#ffef9d";
+      strokeWidth = 3.2;
     } else if (note.trace) {
       color = "#7bdff2";
+      strokeColor = "#c9f5ff";
+      strokeWidth = 1.6;
     } else if (note.type === "slide") {
       color = "#5dade2";
     } else {
       color = "#ff9f1c";
     }
 
-    let strokeColor = "";
-    let strokeWidth = 2;
     if (note.type === "slide" && (note.pointType === "tick" || note.pointType === "attach")) {
       strokeColor = "#ff9f1c";
       strokeWidth = 4;
@@ -1371,6 +1650,8 @@ function drawScene(gs) {
 
     drawNoteRect(note, y, color, gs, strokeColor, strokeWidth);
   }
+
+  drawParticles(gs);
 
   for (const t of gs.judgeTexts) {
     const age = gs.nowSec - t.born;
@@ -1448,10 +1729,8 @@ function updateAutoJudge(gs) {
 
     if (note.type === "damage") {
       if (Math.abs(now - note.time) <= 0.05) {
-        for (const laneIdx of pressedLanes) {
-          if (noteWithinLane(note, laneIdx)) {
-            note.touched = true;
-          }
+        if (noteTouchedByPressedInput(note) >= 0) {
+          note.touched = true;
         }
       }
       if (now > note.time + 0.05) {
@@ -1468,16 +1747,14 @@ function updateAutoJudge(gs) {
       }
 
       if (Math.abs(now - note.time) <= 0.125) {
-        for (const laneIdx of pressedLanes) {
-          if (noteWithinLane(note, laneIdx)) {
-            if (now < note.time - FAST_JUDGE_SNAP_SEC) {
-              note.fastSnapTouched = true;
-              note.fastSnapLane = laneIdx;
-            } else {
-              const snappedDeltaMs = clamp((now - note.time) * 1000, -FAST_JUDGE_SNAP_SEC * 1000, FAST_JUDGE_SNAP_SEC * 1000);
-              registerJudge(gs, note, "C-Perfect", laneIdx, snappedDeltaMs);
-            }
-            break;
+        const laneIdx = noteTouchedByPressedInput(note);
+        if (laneIdx >= 0) {
+          if (now < note.time - FAST_JUDGE_SNAP_SEC) {
+            note.fastSnapTouched = true;
+            note.fastSnapLane = laneIdx;
+          } else {
+            const snappedDeltaMs = clamp((now - note.time) * 1000, -FAST_JUDGE_SNAP_SEC * 1000, FAST_JUDGE_SNAP_SEC * 1000);
+            registerJudge(gs, note, "C-Perfect", laneIdx, snappedDeltaMs);
           }
         }
       } else if (now > note.time + 0.125) {
@@ -1567,9 +1844,12 @@ function tick() {
   if (!gs || !gs.playing) return;
 
   gs.nowSec = performance.now() / 1000;
+  const dtSec = clamp(gs.nowSec - (gs.lastFrameSec || gs.nowSec), 0, 0.05);
+  gs.lastFrameSec = gs.nowSec;
   gs.elapsed = gs.nowSec - gs.startAt + app.config.judgeA * JUDGE_ADJUST_UNIT_SEC;
 
   updateAutoJudge(gs);
+  updateParticles(gs, dtSec);
   drawScene(gs);
   updateHud(gs);
 
@@ -1593,6 +1873,8 @@ function tick() {
 }
 
 async function startGame() {
+  clearInputStates();
+
   if (!ui.chartSelect.value) {
     ui.menuStatus.textContent = "譜面が見つかりませんでした";
     return;
@@ -1682,6 +1964,8 @@ async function startGame() {
     gameOver: false,
     damageCount: 0,
     damageOneTimeGuardUsed: false,
+    particles: [],
+    lastFrameSec: 0,
     nowSec: 0,
     elapsed: 0,
     trackX: 0,
@@ -1699,6 +1983,7 @@ async function startGame() {
       setTimeout(() => {
         gs.playing = true;
         gs.startAt = performance.now() / 1000;
+        gs.lastFrameSec = gs.startAt;
         playChartAudio(gs.chartPath);
         requestAnimationFrame(tick);
       }, 3000);
@@ -1708,12 +1993,15 @@ async function startGame() {
 
 function backToMenu() {
   stopAudio();
+  clearInputStates();
   app.gameState = null;
   setPanel(ui.menu);
   ui.menuStatus.textContent = "";
 }
 
 async function init() {
+  ui.canvas.style.touchAction = "none";
+
   loadSettings();
   applyConfigToUI();
   applyDifficultyTint();
@@ -1736,6 +2024,12 @@ async function init() {
     app.config.difficulty = ui.difficultySelect.value;
     applyDifficultyTint();
     saveSettings();
+  });
+  ui.particleLevel.addEventListener("change", () => {
+    if (Object.prototype.hasOwnProperty.call(PARTICLE_COUNT_BY_LEVEL, ui.particleLevel.value)) {
+      app.config.particleLevel = ui.particleLevel.value;
+      saveSettings();
+    }
   });
   ui.showCP.addEventListener("change", () => {
     app.config.showCP = ui.showCP.checked;
