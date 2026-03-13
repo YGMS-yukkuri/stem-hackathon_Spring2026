@@ -98,13 +98,14 @@ const ui = {
   readyOverlay: document.getElementById("readyOverlay"),
   gameOverOverlay: document.getElementById("gameOverOverlay"),
   resultScore: document.getElementById("resultScore"),
+  resultRate: document.getElementById("resultRate"),
   resultCombo: document.getElementById("resultCombo"),
   rCP: document.getElementById("rCP"),
   rP: document.getElementById("rP"),
   rG: document.getElementById("rG"),
   rGo: document.getElementById("rGo"),
   rMiss: document.getElementById("rMiss"),
-  rBad: document.getElementById("rBad"),
+  rEarlySlow: document.getElementById("rEarlySlow"),
   rDmg: document.getElementById("rDmg"),
   specials: document.getElementById("specials"),
   canvas: document.getElementById("gameCanvas")
@@ -172,7 +173,7 @@ function loadSettings() {
     if (typeof data.judgeA === "number") app.config.judgeA = clamp(data.judgeA, -5, 5);
     if (typeof data.judgeB === "number") app.config.judgeB = clamp(data.judgeB, -5, 5);
     if (typeof data.volume === "number") app.config.volume = clamp(Math.round(data.volume), 0, 100);
-    if (typeof data.judgeTextY === "number") app.config.judgeTextY = clamp(data.judgeTextY, -5, 5);
+    if (typeof data.judgeTextY === "number") app.config.judgeTextY = clamp(data.judgeTextY, -8, 8);
     if (typeof data.showCP === "boolean") app.config.showCP = data.showCP;
     if (typeof data.difficulty === "string" && Object.prototype.hasOwnProperty.call(DIFFICULTY_DAMAGE_RATE, data.difficulty)) {
       app.config.difficulty = data.difficulty;
@@ -585,6 +586,10 @@ function pushJudgeText(gs, label, x, y) {
   });
 }
 
+function judgeTextYOffsetPx() {
+  return -app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX;
+}
+
 function particleCountForLevel(level) {
   return PARTICLE_COUNT_BY_LEVEL[level] ?? PARTICLE_COUNT_BY_LEVEL.standard;
 }
@@ -593,25 +598,23 @@ function spawnJudgeParticles(gs, note, laneIdx, judge) {
   if (!gs) return;
   const count = particleCountForLevel(app.config.particleLevel);
   if (count <= 0) return;
-  if (judge === "Miss" || judge === "SAFE") return;
-  if (note.type === "slidePulse") return;
+  if (judge === "SAFE") return;
 
   const trackWidth = gs.trackWidth > 0 ? gs.trackWidth : ui.canvas.width * 0.8;
   const trackX = gs.trackWidth > 0 ? gs.trackX : ui.canvas.width * 0.1;
-  const x = Number.isInteger(laneIdx)
-    ? trackX + ((laneIdx + 0.5) * trackWidth) / 12
-    : laneCenterX(note.lane, note.size, { trackX, trackWidth });
+  const x = laneCenterX(note.lane, note.size, { trackX, trackWidth });
   const y = gs.judgeY + 8;
 
-  let color = "#ffd166";
-  if (note.type === "damage" || judge === "DAMAGE") {
-    color = "#ff5e5e";
-  } else if (note.trace && note.critical) {
-    color = "#9fe8ff";
-  } else if (note.critical) {
-    color = "#ffd54a";
-  } else if (note.trace) {
-    color = "#7bdff2";
+  let color = "#f4f6ff";
+  if (judge === "C-Perfect") color = "#ffe56b";
+  else if (judge === "Perfect") color = "#fff59d";
+  else if (judge === "Great") color = "#ffbe6a";
+  else if (judge === "Good") color = "#9ddf6f";
+  else if (judge === "Miss") color = "#8d9fb0";
+  else if (judge === "DAMAGE") color = "#ff5e5e";
+
+  if (note.trace && note.critical && (judge === "C-Perfect" || judge === "Perfect")) {
+    color = "#a9f0ff";
   }
 
   for (let i = 0; i < count; i += 1) {
@@ -662,11 +665,18 @@ function drawParticles(gs) {
   ctx.globalAlpha = 1;
 }
 
+function shouldCountTimingStats(note, judge) {
+  if (note.type === "damage" || note.type === "slidePulse") return false;
+  if (!(judge === "C-Perfect" || judge === "Perfect" || judge === "Great" || judge === "Good")) return false;
+  if (note.type === "slide" && (note.pointType === "attach" || (note.pointType === "end" && !note.direction))) return false;
+  return true;
+}
+
 function shouldShowTimingHint(judge) {
   if (app.config.showCP) {
-    return judge === "Perfect" || judge === "Great" || judge === "Good" || judge === "Bad";
+    return judge === "Perfect" || judge === "Great" || judge === "Good";
   }
-  return judge === "Great" || judge === "Good" || judge === "Bad";
+  return judge === "Great" || judge === "Good";
 }
 
 function timingHintLabel(deltaMs) {
@@ -706,7 +716,7 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
     const trackWidth = gs.trackWidth > 0 ? gs.trackWidth : ui.canvas.width * 0.8;
     const trackX = gs.trackWidth > 0 ? gs.trackX : ui.canvas.width * 0.1;
     const x = laneCenterX(note.lane, note.size, { trackX, trackWidth });
-    pushJudgeText(gs, judge, x, judgeBaseY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX);
+    pushJudgeText(gs, judge, x, judgeBaseY + judgeTextYOffsetPx());
 
     logGame("JUDGE_DAMAGE", {
       judge,
@@ -757,7 +767,12 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
   const trackWidth = gs.trackWidth > 0 ? gs.trackWidth : ui.canvas.width * 0.8;
   const trackX = gs.trackWidth > 0 ? gs.trackX : ui.canvas.width * 0.1;
   const x = laneCenterX(note.lane, note.size, { trackX, trackWidth });
-  pushJudgeText(gs, judge, x, gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX);
+  pushJudgeText(gs, judge, x, gs.judgeY + judgeTextYOffsetPx());
+
+  if (shouldCountTimingStats(note, judge)) {
+    if (deltaMs < 0) gs.timingStats.early += 1;
+    if (deltaMs > 0) gs.timingStats.slow += 1;
+  }
 
   if (note.type !== "damage" && shouldShowTimingHint(judge)) {
     const hint = timingHintLabel(deltaMs);
@@ -765,7 +780,7 @@ function registerJudge(gs, note, judge, laneIdx, deltaMs = 0) {
       gs.judgeTexts.push({
         label: hint,
         x,
-        y: gs.judgeY + app.config.judgeTextY * JUDGE_TEXT_Y_SCALE_PX + 24,
+        y: gs.judgeY + judgeTextYOffsetPx() + 24,
         born: performance.now() / 1000,
         customColor: TIMING_HINT_COLORS[hint]
       });
@@ -1083,8 +1098,8 @@ function setupSteppers() {
         max = 100;
       }
       if (target === "judgeTextY") {
-        min = -5;
-        max = 5;
+        min = -8;
+        max = 8;
       }
       const rawNext = app.config[target] + step;
       const next = target === "laneSpeed" ? Math.max(min, rawNext) : clamp(rawNext, min, max);
@@ -1503,10 +1518,29 @@ function drawPathObjects(gs, h, speedPx) {
 
     if (samples.length < 2) continue;
 
-    let fill = "#5dade299";
     if (obj.type === "guide") {
-      fill = "#65d18a66";
+      const fadeMode = obj.fade === "in" ? "in" : "out";
+      const denom = Math.max(1, samples.length - 2);
+      for (let i = 0; i < samples.length - 1; i += 1) {
+        const t = i / denom;
+        const alpha = fadeMode === "in" ? 0.95 - 0.77 * t : 0.18 + 0.77 * t;
+        const a = samples[i];
+        const b = samples[i + 1];
+        ctx.globalAlpha = clamp(alpha, 0.05, 1);
+        ctx.fillStyle = "#65d18a";
+        ctx.beginPath();
+        ctx.moveTo(a.x - a.halfW, a.y);
+        ctx.lineTo(b.x - b.halfW, b.y);
+        ctx.lineTo(b.x + b.halfW, b.y);
+        ctx.lineTo(a.x + a.halfW, a.y);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      continue;
     }
+
+    let fill = "#5dade299";
     if (obj.type === "slide") {
       const s = gs.slideStates.get(obj.slideId);
       const inWindow = gs.elapsed >= obj.startTime && gs.elapsed <= obj.endTime;
@@ -1814,13 +1848,15 @@ function showResult(gs) {
   setPanel(ui.result);
 
   ui.resultScore.textContent = formatNumber(gs.score);
+  const rate = clamp((gs.score / SCORE_MAX_WITH_CRITICAL_BONUS) * 100, 0, 100);
+  ui.resultRate.textContent = `${rate.toFixed(2)}%`;
   ui.resultCombo.textContent = formatNumber(gs.maxCombo);
   ui.rCP.textContent = String(gs.counts["C-Perfect"] || 0);
   ui.rP.textContent = String(gs.counts.Perfect || 0);
   ui.rG.textContent = String(gs.counts.Great || 0);
   ui.rGo.textContent = String(gs.counts.Good || 0);
   ui.rMiss.textContent = String(gs.counts.Miss || 0);
-  ui.rBad.textContent = String(gs.counts.Bad || 0);
+  ui.rEarlySlow.textContent = `${gs.timingStats.early}/${gs.timingStats.slow}`;
   ui.rDmg.textContent = String(gs.counts.DAMAGE || 0);
 
   ui.specials.innerHTML = "";
@@ -1832,8 +1868,10 @@ function showResult(gs) {
 
   logGame("RESULT", {
     score: gs.score,
+    rate,
     maxCombo: gs.maxCombo,
     counts: gs.counts,
+    timingStats: gs.timingStats,
     hp: gs.hp,
     specials: computeSpecials(gs)
   });
@@ -1901,7 +1939,8 @@ async function startGame() {
     judgeB: app.config.judgeB,
     judgeTextY: app.config.judgeTextY,
     volume: app.config.volume,
-    showCP: app.config.showCP
+    showCP: app.config.showCP,
+    particleLevel: app.config.particleLevel
   });
 
   let chart;
@@ -1940,9 +1979,12 @@ async function startGame() {
       Great: 0,
       Good: 0,
       Miss: 0,
-      Bad: 0,
       DAMAGE: 0,
       SAFE: 0
+    },
+    timingStats: {
+      early: 0,
+      slow: 0
     },
     hp: hpMax,
     hpMax,
