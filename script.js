@@ -418,7 +418,9 @@ function buildJudgeItems(chart) {
 
     if (obj.type === "guide") {
       const points = (obj.midpoints || []).map((m) => ({ ...m, time: beatToSec(m.beat) + chartOffsetSec }));
-      drawObjects.push({ type: "guide", points, fade: obj.fade || "out" });
+      const fadeRaw = typeof obj.fade === "string" ? obj.fade.toLowerCase() : "out";
+      const fade = fadeRaw === "in" ? "in" : "out";
+      drawObjects.push({ type: "guide", points, fade });
     }
   }
 
@@ -1523,7 +1525,7 @@ function drawPathObjects(gs, h, speedPx) {
       const denom = Math.max(1, samples.length - 2);
       for (let i = 0; i < samples.length - 1; i += 1) {
         const t = i / denom;
-        const alpha = fadeMode === "in" ? 0.95 - 0.77 * t : 0.18 + 0.77 * t;
+        const alpha = fadeMode === "in" ? 0.18 + 0.77 * t : 0.95 - 0.77 * t;
         const a = samples[i];
         const b = samples[i + 1];
         ctx.globalAlpha = clamp(alpha, 0.05, 1);
