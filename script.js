@@ -355,7 +355,25 @@ function buildJudgeItems(chart) {
 
       for (const c of conns) {
         const time = beatToSec(c.beat) + chartOffsetSec;
-        points.push({ ...c, time, parentCritical: !!obj.critical });
+        points.push({
+          ...c,
+          time,
+          parentCritical: !!obj.critical,
+          timeScale: timeScaleAt(c.timeScaleGroup || 0, c.beat)
+        });
+      }
+
+      const renderPoints = points.filter((p) => p.type !== "attach");
+      const pathPoints = renderPoints.length >= 2 ? renderPoints : points;
+
+      for (const c of points) {
+        let lane = c.lane;
+        let size = c.size;
+        if (c.type === "attach" && pathPoints.length >= 2) {
+          const attachPoint = interpolateSlidePointAtBeat(pathPoints, c.beat);
+          lane = attachPoint.lane;
+          size = attachPoint.size;
+        }
 
         const visibleTick = c.type !== "tick" || Object.prototype.hasOwnProperty.call(c, "critical");
         if (visibleTick) {
@@ -365,10 +383,10 @@ function buildJudgeItems(chart) {
             type: "slide",
             slideId,
             pointType: c.type,
-            time,
+            time: c.time,
             beat: c.beat,
-            lane: c.lane,
-            size: c.size,
+            lane,
+            size,
             critical: !!c.critical || !!obj.critical,
             trace: c.type === "tick" || c.judgeType === "trace",
             direction: !!c.direction,
@@ -379,8 +397,8 @@ function buildJudgeItems(chart) {
         }
       }
 
-      const startPoint = points.find((p) => p.type === "start");
-      const endPoint = [...points].reverse().find((p) => p.type === "end");
+      const startPoint = pathPoints.find((p) => p.type === "start");
+      const endPoint = [...pathPoints].reverse().find((p) => p.type === "end");
       const startTime = startPoint ? startPoint.time : 0;
       const endTime = endPoint ? endPoint.time : startTime;
 
@@ -393,8 +411,20 @@ function buildJudgeItems(chart) {
       });
 
       if (startPoint && endPoint) {
+        const resolveConnectionGroupAtBeat = (slidePoints, beat) => {
+          if (!slidePoints.length) return 0;
+          if (beat <= slidePoints[0].beat) return slidePoints[0].timeScaleGroup || 0;
+          for (let i = 0; i < slidePoints.length - 1; i += 1) {
+            const a = slidePoints[i];
+            const b = slidePoints[i + 1];
+            if (beat <= b.beat) return a.timeScaleGroup || 0;
+          }
+          return slidePoints[slidePoints.length - 1].timeScaleGroup || 0;
+        };
+
         for (let beat = startPoint.beat + 1.0; beat <= endPoint.beat - 1.0 + 1e-6; beat += 0.5) {
-          const p = interpolateSlidePointAtBeat(points, beat);
+          const p = interpolateSlidePointAtBeat(pathPoints, beat);
+          const pulseGroup = resolveConnectionGroupAtBeat(pathPoints, beat);
           judgeItems.push({
             id: `slide-pulse-${judgeItems.length}`,
             type: "slidePulse",
@@ -408,16 +438,20 @@ function buildJudgeItems(chart) {
             direction: false,
             judged: false,
             comboValue: 1,
-            timeScale: timeScaleAt(startPoint.timeScaleGroup || 0, beat)
+            timeScale: timeScaleAt(pulseGroup, beat)
           });
         }
       }
 
-      drawObjects.push({ type: "slide", slideId, points, startTime, endTime, startCritical: !!obj.critical });
+      drawObjects.push({ type: "slide", slideId, points: pathPoints, startTime, endTime, startCritical: !!obj.critical });
     }
 
     if (obj.type === "guide") {
-      const points = (obj.midpoints || []).map((m) => ({ ...m, time: beatToSec(m.beat) + chartOffsetSec }));
+      const points = (obj.midpoints || []).map((m) => ({
+        ...m,
+        time: beatToSec(m.beat) + chartOffsetSec,
+        timeScale: timeScaleAt(m.timeScaleGroup || 0, m.beat)
+      }));
       const fadeRaw = typeof obj.fade === "string" ? obj.fade.toLowerCase() : "out";
       const fade = fadeRaw === "in" ? "in" : "out";
       drawObjects.push({ type: "guide", points, fade });
@@ -1499,8 +1533,8 @@ function drawPathObjects(gs, h, speedPx) {
     for (let i = 0; i < points.length - 1; i += 1) {
       const a = points[i];
       const b = points[i + 1];
-      const yA = gs.judgeY - (a.time - gs.elapsed) * speedPx;
-      const yB = gs.judgeY - (b.time - gs.elapsed) * speedPx;
+      const yA = gs.judgeY - (a.time - gs.elapsed) * speedPx * (a.timeScale || 1);
+      const yB = gs.judgeY - (b.time - gs.elapsed) * speedPx * (b.timeScale || 1);
       if ((yA < -60 && yB < -60) || (yA > h + 60 && yB > h + 60)) continue;
 
       const xA = laneCenterX(a.lane, a.size, gs);
